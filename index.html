@@ -46,7 +46,7 @@
          // State
          let d3, versor, topojson, geoMollweide, geoPolyhedralWaterman, geoCentroid;
          let rewind;
-         let turfBBox;
+     //    let turfBBox;
          let panStart = { x: 0, y: 0, transform: { x: 0, y: 0, k: 1, toString: () => `translate(0,0) scale(1)` } };
          let showLabels = true;
          let labelFontSize = 12;
@@ -117,14 +117,14 @@
          import('https://cdn.jsdelivr.net/npm/d3-geo-projection@4/+esm'),
          import('https://cdn.jsdelivr.net/npm/versor@0/+esm'),
          import('https://cdn.jsdelivr.net/npm/topojson-client@3/+esm'),
-         import('https://cdn.jsdelivr.net/npm/@turf/turf@6/+esm')
+   //      import('https://cdn.jsdelivr.net/npm/@turf/turf@6/+esm')
          ]);
          d3 = d3m;
          ({ geoMollweide, geoPolyhedralWaterman, geoCentroid } = projM);
          versor = versorM.default;
          topojson = topojsonM;
          rewind   = window.geojsonRewind.rewind;
-         turfBBox = turfM.bbox;
+ //        turfBBox = turfM.bbox;
          
            // Projections
            projections = [
@@ -157,6 +157,7 @@
            graticule = d3.geoGraticule();
            await loadData();
            renderUI();
+           updateCountrySelector(); // <-- Move this here, after renderUI()
            isReady = true;
            setupInteractions();
            onResize();
@@ -170,7 +171,7 @@
            const fc = topojson.feature(data, data.objects[object]);
            countries = fc.features;
            borders = topojson.mesh(data, data.objects[object], (a, b) => a !== b);
-           updateCountrySelector();
+           // updateCountrySelector();
            updateMap();
          }
          
@@ -269,7 +270,7 @@
          // Render UI
          function renderUI() {
            document.querySelector('#app').innerHTML = `
-             <div class="grid">
+                <div class="grid">
                <aside class="controls">
                  <h3>Dimensions</h3>
                  <label>
