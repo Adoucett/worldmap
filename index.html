@@ -48,6 +48,7 @@
   <script type="module">
     // State
     let d3, versor, topojson, geoMollweide, geoPolyhedralWaterman, geoCentroid;
+    let rewind;
     let panStart = { x: 0, y: 0, transform: { x: 0, y: 0, k: 1, toString: () => `translate(0,0) scale(1)` } };
     let showLabels = true;
     let labelFontSize = 12;
