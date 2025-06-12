@@ -1,704 +1,701 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>World Map Creator</title>
-  <style>
-    body { margin: 0; font-family: sans-serif; }
-    .grid { display: grid; grid-template-columns: 300px 1fr 280px; height: 100vh; }
-    .controls, .selector {
-      padding: 1rem; overflow: auto; background: #ffffff; border-right: 1px solid #eeeeee;
-      display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.86rem;
-    }
-    .mapwrap { display: flex; align-items: center; justify-content: center; background: #fafafa; }
-    h3 { margin: 0.5rem 0 0.2rem; font-weight: 600; border-bottom: 1px solid #eeeeee; }
-    label { display: flex; align-items: center; gap: 0.5rem; }
-    select, input[type="number"], input[type="range"], input[type="color"], button {
-      width: 100%; padding: 0.4rem; border: 1px solid #cccccc; border-radius: 4px; box-sizing: border-box;
-    }
-    button { cursor: pointer; background: #eeeeee; font-weight: 600; }
-    button:hover { background: #dddddd; }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-    .loading { display: flex; align-items: center; justify-content: center; height: 100vh; color: #777777; }
-    svg { cursor: move; }
-    svg:active, svg.panning { cursor: grabbing; }
-    small { font-size: 0.75rem; color: #666666; }
-    .multi-selector { display: flex; flex-direction: column; height: 100%; }
-    .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    .search-row input { flex: 1; }
-    .list { flex: 1; overflow: auto; border: 1px solid #ccc; border-radius: 4px; }
-    .list > div { padding: 0.5rem; cursor: pointer; border-bottom: 1px solid #eee; }
-    .list > div:last-child { border-bottom: none; }
-    .list > div:hover { background: #f0f0f0; }
-    .list > div.selected { background: #007acc; color: white; font-weight: bold; }
-    .empty { padding: 0.5rem; color: #666; font-style: italic; }
-    .selected-display { margin-top: 1rem; border-top: 1px dashed #ccc; padding-top: 0.75rem; }
-    .pills { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
-    .pill { background: #007acc; color: #fff; padding: 0.25rem 0.5rem; border-radius: 1rem; display: flex; align-items: center; gap: 0.25rem; font-size: 0.9em; }
-    .pill button { background: none; border: none; color: #fff; font-weight: bold; cursor: pointer; padding: 0; line-height: 1; }
-  </style>
-</head>
-<body>
-  <div id="app" class="loading">Loading map creator…</div>
-
-<script src="https://cdn.jsdelivr.net/npm/geojson-rewind@0.3.1/geojson-rewind.js"></script>
-
-
-  <script type="module">
-    // State
-    let d3, versor, topojson, geoMollweide, geoPolyhedralWaterman, geoCentroid;
-    let rewind;
-    let turfBBox;
-    let panStart = { x: 0, y: 0, transform: { x: 0, y: 0, k: 1, toString: () => `translate(0,0) scale(1)` } };
-    let showLabels = true;
-    let labelFontSize = 12;
-    let labelStrokeColor = '#ffffff';
-    let labelStrokeWidth = 1;
-    let outputWidth = 1920;
-    let outputHeight = 1080;
-    const dimensionPresets = [
-      { name: 'Web (1200×628)', w: 1200, h: 628 },
-      { name: 'HD (1920×1080)', w: 1920, h: 1080 },
-      { name: '4K (3840×2160)', w: 3840, h: 2160 },
-      { name: 'Custom', w: 1920, h: 1080 }
-    ];
-    let selectedPreset = dimensionPresets[1];
-    const basemapModes = {
-      planet: { name: 'Planet Labs', ocean: '#d2d2d2', land: '#ffffff', stroke: '#cccccc', grid: '#ffffff', label: '#333333', highlight: '#009DA5' },
-      light: { name: 'Light', ocean: '#e8eef3', land: '#ffffff', stroke: '#cccccc', grid: '#bbccddee', label: '#333333', highlight: '#2d7be5' },
-      dark: { name: 'Dark', ocean: '#1e1e1e', land: '#252525', stroke: '#404040', grid: '#333333', label: '#dddddd', highlight: '#ffa600' },
-      high: { name: 'High-contrast', ocean: '#000000', land: '#ffffff', stroke: '#000000', grid: '#ff00ff', label: '#000000', highlight: '#ff00ff' },
-      custom: { name: 'Custom', ocean: '#e8eef3', land: '#ffffff', stroke: '#cccccc', grid: '#bbccddee', label: '#333333', highlight: '#2d7be5' }
-    };
-    let basemapKey = 'planet';
-    let customOceanFill = '#e8eef3';
-    let customLandFill = '#ffffff';
-    let customLandStroke = '#cccccc';
-    let customGraticuleStroke = '#bbccddee';
-    let customLabelFill = '#333333';
-    let customHighlightFill = '#2d7be5';
-    let oceanFill = basemapModes.planet.ocean;
-    let landFill = basemapModes.planet.land;
-    let landStroke = basemapModes.planet.stroke;
-    let landStrokeWidth = 0.8;
-    let highlightFill = basemapModes.planet.highlight;
-    let graticuleStroke = basemapModes.planet.grid;
-    let graticuleStrokeWidth = 0.5;
-    let labelFill = basemapModes.planet.label;
-    let container, svg;
-    let viewW = 0, viewH = 0;
-    let projections = [];
-    let selectedProjectionId = 'equalEarth';
-    let projection, path, graticule, zoomBehavior;
-    let currentTransform = { x: 0, y: 0, k: 1, toString: () => `translate(0,0) scale(1)` };
-    const rotation = { x: 0, y: 0, z: 0 };
-    let countries = [], borders = null;
-    let centerLon = 0;
-    let centerLat = 0;
-    let mapDataSources = [], selectedDataSource;
-    let selectedCountryNames = [];
-    let zoomSlider = 1;
-    let isReady = false;
-    let isPanning = false;
-    let searchTerm = '';
-
-    // Utilities
-    const debounce = (fn, ms = 120) => {
-      let t;
-      return (...a) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...a), ms);
-      };
-    };
-
-    // Initialize
-    async function init() {
-      // Load libraries
-      const [d3m, projM, versorM, topojsonM, rewindM, turfM] = await Promise.all([
-        import('https://cdn.jsdelivr.net/npm/d3@7/+esm'),
-        import('https://cdn.jsdelivr.net/npm/d3-geo-projection@4/+esm'),
-        import('https://cdn.jsdelivr.net/npm/versor@0/+esm'),
-        import('https://cdn.jsdelivr.net/npm/topojson-client@3/+esm'),
-        import('https://cdn.jsdelivr.net/npm/@turf/turf@6/+esm')
-      ]);
-      d3 = d3m;
-      ({ geoMollweide, geoPolyhedralWaterman, geoCentroid } = projM);
-      versor = versorM.default;
-      topojson = topojsonM;
-      rewind   = window.geojsonRewind.rewind;
-      turfBBox = turfM.bbox;
-
-      // Projections
-      projections = [
-        { id: 'mercator', name: 'Mercator', p: d3.geoMercator() },
-        { id: 'albersUsa', name: 'Albers USA', p: d3.geoAlbersUsa() },
-        { id: 'azimuthal', name: 'Azimuthal Equal Area', p: d3.geoAzimuthalEqualArea() },
-        { id: 'conicEqual', name: 'Conic Equal Area', p: d3.geoConicEqualArea() },
-        { id: 'conicConformal', name: 'Conic Conformal', p: d3.geoConicConformal() },
-        { id: 'conicEquidistant', name: 'Conic Equidistant', p: d3.geoConicEquidistant() },
-        { id: 'equalEarth', name: 'Equal Earth', p: d3.geoEqualEarth() },
-        { id: 'equirect', name: 'Equirectangular', p: d3.geoEquirectangular() },
-        { id: 'mollweide', name: 'Mollweide', p: geoMollweide() },
-        { id: 'orthographic', name: 'Orthographic', p: d3.geoOrthographic() },
-        { id: 'waterman', name: 'Waterman (Butterfly)', p: geoPolyhedralWaterman() }
-      ];
-
-      // Load TopoJSONs
-      const [t110, t50, t10] = await Promise.all([
-  fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_110m_admin_0_countries_TOPOJSON_compact.json').then(r => r.json()),
-  fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_50m_admin_0_countries_TOPOJSON_compact.json').then(r => r.json()),
-  fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_10m_admin_0_countries_usa_TOPOJSON_compact.json').then(r => r.json())
-]);
-      mapDataSources = [
-        { name: 'Low Res (110 m)', data: t110, object: Object.keys(t110.objects)[0] },
-        { name: 'Med Res (50 m)', data: t50, object: Object.keys(t50.objects)[0] },
-        { name: 'High Res (10 m)', data: t10, object: Object.keys(t10.objects)[0] }
-      ];
-      selectedDataSource = mapDataSources[1];
-
-      graticule = d3.geoGraticule();
-      await loadData();
-      renderUI();
-      isReady = true;
-      setupInteractions();
-      onResize();
-      window.addEventListener('resize', onResize);
-    }
-
-    // Load data
-    async function loadData() {
-      if (!selectedDataSource || !topojson) return;
-      const { data, object } = selectedDataSource;
-      const fc = topojson.feature(data, data.objects[object]);
-      countries = fc.features;
-      borders = topojson.mesh(data, data.objects[object], (a, b) => a !== b);
-      updateCountrySelector();
-      updateMap();
-    }
-
-    // Resize handler
-    const onResize = debounce(() => {
-      if (!container) return;
-      viewW = container.clientWidth;
-      viewH = container.clientHeight;
-      updateMap();
-    });
-
-    // Interactions
-    function setupInteractions() {
-      const svgSel = d3.select(svg);
-      zoomBehavior = d3.zoom()
-        .scaleExtent([1, 40])
-        .on('zoom', e => {
-          currentTransform = e.transform;
-          zoomSlider = +e.transform.k.toFixed(1);
-          document.querySelector('#zoom-slider').value = zoomSlider;
-          document.querySelector('#zoom-value').textContent = `${zoomSlider.toFixed(1)}× • ${selectedProjectionId === 'orthographic' ? 'Rotate' : 'Pan'}`;
-          updateMap();
-        });
-      svgSel.call(zoomBehavior);
-      svgSel.select('g').call(
-        d3.drag()
-          .on('start', dragStart)
-          .on('drag', dragMove)
-          .on('end', () => {
-            isPanning = false;
-            svg.classList.remove('panning');
-          })
-      );
-    }
-
-    function dragStart(event) {
-      isPanning = true;
-      svg.classList.add('panning');
-      if (selectedProjectionId === 'orthographic') {
-        const [x, y] = [event.x, event.y];
-        panStart = {
-          v0: versor.cartesian(projection.invert([x, y])),
-          q0: versor.rotation(projection.rotate()),
-          r0: projection.rotate()
-        };
-      } else {
-        panStart = { x: event.x, y: event.y, transform: currentTransform };
-      }
-    }
-
-    function dragMove(event) {
-      if (selectedProjectionId === 'orthographic') {
-        const { v0, q0, r0 } = panStart;
-        const v1 = versor.cartesian(projection.rotate(r0).invert([event.x, event.y]));
-        const q1 = versor.multiply(q0, versor.delta(v0, v1));
-        [rotation.x, rotation.y, rotation.z] = versor.rotation(q1);
-      } else {
-        const dx = (event.x - panStart.x) / panStart.transform.k;
-        const dy = (event.y - panStart.y) / panStart.transform.k;
-        const t2 = panStart.transform.translate(dx, dy);
-        d3.select(svg).call(zoomBehavior.transform, t2);
-      }
-      updateMap();
-    }
-
-    // Update projection
-    function updateProjection() {
-      const selectedProjection = projections.find(p => p.id === selectedProjectionId);
-      if (!isReady || !viewW || !viewH || !countries.length || !selectedProjection) return;
-      const base = selectedProjection.p.copy?.() ?? selectedProjection.p;
-      projection = base.fitSize([viewW, viewH], { type: 'FeatureCollection', features: countries });
-      if (selectedProjectionId === 'orthographic') {
-        projection.rotate([rotation.x, rotation.y]);
-      } else {
-        projection.center([centerLon, centerLat]);
-      }
-      path = d3.geoPath().projection(projection);
-      updateMap();
-    }
-
-    // Update colors
-    function updateColors() {
-      if (basemapKey === 'custom') {
-        oceanFill = customOceanFill;
-        landFill = customLandFill;
-        landStroke = customLandStroke;
-        graticuleStroke = customGraticuleStroke;
-        labelFill = customLabelFill;
-        highlightFill = customHighlightFill;
-      } else {
-        ({ ocean: oceanFill, land: landFill, stroke: landStroke, grid: graticuleStroke, label: labelFill, highlight: highlightFill } = basemapModes[basemapKey]);
-      }
-      updateMap();
-    }
-
-    // Render UI
-    function renderUI() {
-      document.querySelector('#app').innerHTML = `
-        <div class="grid">
-          <aside class="controls">
-            <h3>Dimensions</h3>
-            <label>
-              Preset
-              <select id="preset">
-                ${dimensionPresets.map(p => `<option value="${p.name}" ${p.name === selectedPreset.name ? 'selected' : ''}>${p.name}</option>`).join('')}
-              </select>
-            </label>
-            <div id="custom-dimensions" style="display: ${selectedPreset.name === 'Custom' ? 'block' : 'none'}">
-              <label>Width <input type="number" id="output-width" value="${outputWidth}" min="100"></label>
-              <label>Height <input type="number" id="output-height" value="${outputHeight}" min="100"></label>
-            </div>
-
-            <h3>Basemap</h3>
-            <label>
-              Theme
-              <select id="basemap">
-                ${Object.entries(basemapModes).map(([k, m]) => `<option value="${k}" ${k === basemapKey ? 'selected' : ''}>${m.name}</option>`).join('')}
-              </select>
-            </label>
-            <div id="custom-colors" style="display: ${basemapKey === 'custom' ? 'block' : 'none'}">
-              <label>Ocean <input type="color" id="custom-ocean" value="${customOceanFill}"></label>
-              <label>Land <input type="color" id="custom-land" value="${customLandFill}"></label>
-              <label>Stroke <input type="color" id="custom-stroke" value="${customLandStroke}"></label>
-              <label>Grid <input type="color" id="custom-grid" value="${customGraticuleStroke}"></label>
-              <label>Label <input type="color" id="custom-label" value="${customLabelFill}"></label>
-              <label>Highlight <input type="color" id="custom-highlight" value="${customHighlightFill}"></label>
-            </div>
-
-            <h3>Resolution</h3>
-            <label>
-              Data
-              <select id="resolution">
-                ${mapDataSources.map(ms => `<option value="${ms.name}" ${ms.name === selectedDataSource.name ? 'selected' : ''}>${ms.name}</option>`).join('')}
-              </select>
-            </label>
-
-            <h3>Projection</h3>
-            <label>
-              Type
-              <select id="projection">
-                ${projections.map(p => `<option value="${p.id}" ${p.id === selectedProjectionId ? 'selected' : ''}>${p.name}</option>`).join('')}
-              </select>
-            </label>
-
-            <h3>Zoom & Pan</h3>
-            <label>
-              Zoom
-              <input type="range" id="zoom-slider" min="1" max="10" step="0.1" value="${zoomSlider}">
-              <small id="zoom-value">${zoomSlider.toFixed(1)}× • ${selectedProjectionId === 'orthographic' ? 'Rotate' : 'Pan'}</small>
-            </label>
-
-            <h3>Center</h3>
-            <label>
-              Longitude
-              <input type="range" id="center-lon" min="-180" max="180" step="1" value="${centerLon}">
-              <span>${centerLon.toFixed(0)}°</span>
-            </label>
-            <label>
-              Latitude
-              <input type="range" id="center-lat" min="-90" max="90" step="1" value="${centerLat}">
-              <span>${centerLat.toFixed(0)}°</span>
-            </label>
-            <small>Use these to reposition the map instead of dragging</small>
-
-            <h3>Labels</h3>
-            <label>
-              <input type="checkbox" id="show-labels" ${showLabels ? 'checked' : ''}>
-              Show country labels
-            </label>
-            <div id="label-options" style="display: ${showLabels ? 'block' : 'none'}">
-              <label>Font size <input type="number" id="label-font-size" min="6" max="36" value="${labelFontSize}"></label>
-              <label>Fill <input type="color" id="label-fill" value="${labelFill}"></label>
-              <label>Stroke <input type="color" id="label-stroke" value="${labelStrokeColor}"></label>
-              <label>Stroke W <input type="range" id="label-stroke-width" min="0" max="3" step="0.25" value="${labelStrokeWidth}">
-                <span>${labelStrokeWidth}</span>
-              </label>
-            </div>
-
-            <h3>Locate</h3>
-            <input type="text" id="geocoder" placeholder="Search location...">
-            <button id="reset-view">Reset view</button>
-
-            <h3>Download</h3>
-            <button id="download-svg">SVG</button>
-            <button id="download-png">PNG</button>
-          </aside>
-
-          <main id="map-container" class="mapwrap">
-            <svg id="map-svg" width="0" height="0"></svg>
-          </main>
-
-          <aside class="selector">
-            <div class="multi-selector">
-              <div class="search-row">
-                <input type="text" id="country-search" placeholder="Search countries..." aria-label="Filter country list">
-                <button id="reset-countries" ${selectedCountryNames.length ? '' : 'disabled'}>Reset</button>
-              </div>
-              <div class="list" role="listbox" aria-multiselectable="true" id="country-list"></div>
-              <div class="selected-display">
-                <strong>Selected:</strong>
-                <div class="pills" id="selected-countries"></div>
-              </div>
-            </div>
-          </aside>
-        </div>
-      `;
-      container = document.querySelector('#map-container');
-      svg = document.querySelector('#map-svg');
-      addEventListeners();
-      updateMap();
-    }
-
-    // Event listeners
-    function addEventListeners() {
-      document.querySelector('#preset').addEventListener('change', e => {
-        selectedPreset = dimensionPresets.find(p => p.name === e.target.value);
-        outputWidth = selectedPreset.w;
-        outputHeight = selectedPreset.h;
-        document.querySelector('#custom-dimensions').style.display = selectedPreset.name === 'Custom' ? 'block' : 'none';
-        if (selectedPreset.name === 'Custom') {
-          document.querySelector('#output-width').value = outputWidth;
-          document.querySelector('#output-height').value = outputHeight;
-        }
-      });
-      document.querySelector('#output-width').addEventListener('input', e => {
-        outputWidth = +e.target.value;
-      });
-      document.querySelector('#output-height').addEventListener('input', e => {
-        outputHeight = +e.target.value;
-      });
-      document.querySelector('#basemap').addEventListener('change', e => {
-        basemapKey = e.target.value;
-        document.querySelector('#custom-colors').style.display = basemapKey === 'custom' ? 'block' : 'none';
-        updateColors();
-      });
-      document.querySelector('#custom-ocean').addEventListener('input', e => {
-        customOceanFill = e.target.value;
-        updateColors();
-      });
-      document.querySelector('#custom-land').addEventListener('input', e => {
-        customLandFill = e.target.value;
-        updateColors();
-      });
-      document.querySelector('#custom-stroke').addEventListener('input', e => {
-        customLandStroke = e.target.value;
-        updateColors();
-      });
-      document.querySelector('#custom-grid').addEventListener('input', e => {
-        customGraticuleStroke = e.target.value;
-        updateColors();
-      });
-      document.querySelector('#custom-label').addEventListener('input', e => {
-        customLabelFill = e.target.value;
-        updateColors();
-      });
-      document.querySelector('#custom-highlight').addEventListener('input', e => {
-        customHighlightFill = e.target.value;
-        updateColors();
-      });
-      document.querySelector('#resolution').addEventListener('change', e => {
-        selectedDataSource = mapDataSources.find(ms => ms.name === e.target.value);
-        loadData();
-      });
-      document.querySelector('#projection').addEventListener('change', e => {
-        selectedProjectionId = e.target.value;
-        updateProjection();
-      });
-      document.querySelector('#zoom-slider').addEventListener('input', e => {
-        zoomSlider = +e.target.value;
-        d3.select(svg).call(zoomBehavior.scaleTo, zoomSlider);
-      });
-      document.querySelector('#center-lon').addEventListener('input', e => {
-        centerLon = +e.target.value;
-        document.querySelector('#center-lon + span').textContent = `${centerLon.toFixed(0)}°`;
-        updateProjection();
-      });
-      document.querySelector('#center-lat').addEventListener('input', e => {
-        centerLat = +e.target.value;
-        document.querySelector('#center-lat + span').textContent = `${centerLat.toFixed(0)}°`;
-        updateProjection();
-      });
-      document.querySelector('#show-labels').addEventListener('change', e => {
-        showLabels = e.target.checked;
-        document.querySelector('#label-options').style.display = showLabels ? 'block' : 'none';
-        updateMap();
-      });
-      document.querySelector('#label-font-size').addEventListener('input', e => {
-        labelFontSize = +e.target.value;
-        updateMap();
-      });
-      document.querySelector('#label-fill').addEventListener('input', e => {
-        labelFill = e.target.value;
-        updateMap();
-      });
-      document.querySelector('#label-stroke').addEventListener('input', e => {
-        labelStrokeColor = e.target.value;
-        updateMap();
-      });
-      document.querySelector('#label-stroke-width').addEventListener('input', e => {
-        labelStrokeWidth = +e.target.value;
-        document.querySelector('#label-stroke-width + span').textContent = labelStrokeWidth;
-        updateMap();
-      });
-      document.querySelector('#geocoder').addEventListener('input', e => {
-        // Placeholder for geocoding logic
-      });
-      document.querySelector('#reset-view').addEventListener('click', resetView);
-      document.querySelector('#download-svg').addEventListener('click', () => download('svg'));
-      document.querySelector('#download-png').addEventListener('click', () => download('png'));
-      document.querySelector('#country-search').addEventListener('input', e => {
-        searchTerm = e.target.value;
-        updateCountrySelector();
-      });
-      document.querySelector('#reset-countries').addEventListener('click', () => {
-        selectedCountryNames = [];
-        updateCountrySelector();
-        updateMap();
-      });
-    }
-
-    // Update country selector
-    function updateCountrySelector() {
-      const allNames = countries.map(c => c.properties.NAME).sort();
-      const filtered = searchTerm ? allNames.filter(n => n.toLowerCase().includes(searchTerm.toLowerCase())) : allNames;
-      document.querySelector('#country-list').innerHTML = filtered.length
-        ? filtered.map(name => `
-            <div
-              class="${selectedCountryNames.includes(name) ? 'selected' : ''}"
-              role="option"
-              aria-selected="${selectedCountryNames.includes(name)}"
-              tabindex="0"
-            >${name}</div>
-          `).join('')
-        : `<div class="empty">No matches for "${searchTerm}"</div>`;
-      document.querySelector('#selected-countries').innerHTML = selectedCountryNames.length
-        ? selectedCountryNames.map(nm => `
-            <span class="pill">
-              ${nm}
-              <button aria-label="Remove ${nm}">×</button>
-            </span>
-          `).join('')
-        : '<em>None</em>';
-      document.querySelector('#reset-countries').disabled = !selectedCountryNames.length;
-      document.querySelectorAll('#country-list > div:not(.empty)').forEach(div => {
-        div.addEventListener('click', () => toggleCountry(div.textContent.trim()));
-        div.addEventListener('keydown', e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            toggleCountry(div.textContent.trim());
-          }
-        });
-      });
-      document.querySelectorAll('#selected-countries .pill button').forEach(btn => {
-        btn.addEventListener('click', () => toggleCountry(btn.parentElement.textContent.trim().slice(0, -1)));
-      });
-    }
-
-    function toggleCountry(name) {
-      if (selectedCountryNames.includes(name)) {
-        selectedCountryNames = selectedCountryNames.filter(n => n !== name);
-      } else {
-        selectedCountryNames = [...selectedCountryNames, name];
-      }
-      updateCountrySelector();
-      updateMap();
-    }
-
-    // Update map
-    function updateMap() {
-      if (!svg || !path || !viewW || !viewH) return;
-      svg.setAttribute('width', viewW);
-      svg.setAttribute('height', viewH);
-      svg.innerHTML = `
-        <g transform="${currentTransform.toString()}">
-          <path d="${path({ type: 'Sphere' })}" fill="${oceanFill}"></path>
-          <path d="${path(graticule())}" fill="none" stroke="${graticuleStroke}" stroke-width="${graticuleStrokeWidth / currentTransform.k}"></path>
-          ${countries.map((c, i) => `
-            <path
-              d="${path(c)}"
-              fill="${selectedCountryNames.includes(c.properties.NAME) ? highlightFill : landFill}"
-              stroke="${landStroke}"
-              stroke-width="${landStrokeWidth / currentTransform.k}"
-            >
-              <title>${c.properties.NAME}</title>
-            </path>
-          `).join('')}
-          <path d="${path(borders)}" fill="none" stroke="${landStroke}" stroke-width="${landStrokeWidth / currentTransform.k}"></path>
-          ${showLabels && selectedCountryNames.length ? `
-            <g pointer-events="none" font-family="sans-serif" paint-order="stroke fill">
-              ${countries.filter(c => selectedCountryNames.includes(c.properties.NAME)).map(c => {
-                const [cx, cy] = path.centroid(c);
-                return isFinite(cx) && isFinite(cy) ? `
-                  <text
-                    x="${cx}" y="${cy}"
-                    text-anchor="middle" dy="0.35em"
-                    fill="${labelFill}"
-                    stroke="${labelStrokeColor}"
-                    stroke-width="${labelStrokeWidth / currentTransform.k}"
-                    font-size="${labelFontSize / currentTransform.k}px"
-                  >${c.properties.NAME}</text>
-                ` : '';
-              }).join('')}
-            </g>
-          ` : ''}
-        </g>
-      `;
-    }
-
-    // Reset view
-    function resetView() {
-      d3.select(svg)
-        .transition().duration(600)
-        .call(zoomBehavior.transform, d3.zoomIdentity);
-      rotation.x = rotation.y = rotation.z = 0;
-      zoomSlider = 1;
-      document.querySelector('#zoom-slider').value = zoomSlider;
-      document.querySelector('#zoom-value').textContent = `${zoomSlider.toFixed(1)}× • ${selectedProjectionId === 'orthographic' ? 'Rotate' : 'Pan'}`;
-      updateMap();
-    }
-
-    // Download
-    function download(type = 'svg') {
-      if (!isReady || !d3) return;
-      const base = projections.find(p => p.id === selectedProjectionId).p.copy?.() ?? projections.find(p => p.id === selectedProjectionId).p;
-      const dlProj = base.fitSize([outputWidth, outputHeight], { type: 'FeatureCollection', features: countries });
-      if (selectedProjectionId === 'orthographic') {
-        dlProj.rotate([rotation.x, rotation.y]);
-      } else {
-        dlProj.center([centerLon, centerLat]);
-      }
-      const dlPath = d3.geoPath().projection(dlProj);
-      const t = d3.zoomTransform(svg);
-      const root = d3.create('svg')
-        .attr('xmlns', 'http://www.w3.org/2000/svg')
-        .attr('width', outputWidth)
-        .attr('height', outputHeight);
-      if (type !== 'png') {
-        root.append('rect')
-          .attr('width', outputWidth)
-          .attr('height', outputHeight)
-          .attr('fill', oceanFill);
-      }
-      const g = root.append('g')
-        .attr('id', 'map')
-        .attr('transform', t.toString());
-      g.append('path')
-        .attr('d', dlPath({ type: 'Sphere' }))
-        .attr('fill', oceanFill)
-        .attr('id', 'sphere');
-      g.append('path')
-        .attr('d', dlPath(graticule()))
-        .attr('fill', 'none')
-        .attr('stroke', graticuleStroke)
-        .attr('stroke-width', graticuleStrokeWidth / t.k)
-        .attr('id', 'graticule');
-      const regions = d3.group(countries, d => d.properties.REGION_UN || 'Other');
-      for (const [region, feats] of regions) {
-        const rg = g.append('g')
-          .attr('id', `region_${region.replace(/\s+/g, '_')}`);
-        feats.forEach(c => {
-          rg.append('path')
-            .attr('d', dlPath(c))
-            .attr('fill', selectedCountryNames.includes(c.properties.NAME) ? highlightFill : landFill)
-            .attr('stroke', landStroke)
-            .attr('stroke-width', landStrokeWidth / t.k)
-            .attr('id', `country_${c.properties.ADM0_A3}`);
-        });
-      }
-      g.append('path')
-        .attr('d', dlPath(borders))
-        .attr('fill', 'none')
-        .attr('stroke', landStroke)
-        .attr('stroke-width', landStrokeWidth / t.k)
-        .attr('id', 'borders');
-      if (showLabels && selectedCountryNames.length) {
-        const lbl = g.append('g')
-          .attr('id', 'labels')
-          .attr('font-family', 'sans-serif')
-          .attr('font-size', `${labelFontSize / t.k}px`)
-          .attr('fill', labelFill)
-          .attr('stroke', labelStrokeColor)
-          .attr('stroke-width', labelStrokeWidth / t.k)
-          .attr('paint-order', 'stroke fill');
-        countries
-          .filter(c => selectedCountryNames.includes(c.properties.NAME))
-          .forEach(c => {
-            const [cx, cy] = dlPath.centroid(c);
-            if (isFinite(cx) && isFinite(cy)) {
-              lbl.append('text')
-                .attr('x', cx)
-                .attr('y', cy)
-                .attr('text-anchor', 'middle')
-                .attr('dy', '0.35em')
-                .text(c.properties.NAME);
-            }
-          });
-      }
-      const svgString = new XMLSerializer().serializeToString(root.node());
-      const blob = new Blob([svgString], { type: 'image/svg+xml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      if (type === 'svg') {
-        a.href = url;
-        a.download = 'world-map.svg';
-        a.click();
-        URL.revokeObjectURL(url);
-        return;
-      }
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = outputWidth;
-        canvas.height = outputHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        a.href = canvas.toDataURL('image/png');
-        a.download = 'world-map.png';
-        a.click();
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
-    }
-
-    // Initialize
-    init();
-  </script>
-</body>
+   <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>World Map Creator</title>
+      <style>
+         body { margin: 0; font-family: sans-serif; }
+         .grid { display: grid; grid-template-columns: 300px 1fr 280px; height: 100vh; }
+         .controls, .selector {
+         padding: 1rem; overflow: auto; background: #ffffff; border-right: 1px solid #eeeeee;
+         display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.86rem;
+         }
+         .mapwrap { display: flex; align-items: center; justify-content: center; background: #fafafa; }
+         h3 { margin: 0.5rem 0 0.2rem; font-weight: 600; border-bottom: 1px solid #eeeeee; }
+         label { display: flex; align-items: center; gap: 0.5rem; }
+         select, input[type="number"], input[type="range"], input[type="color"], button {
+         width: 100%; padding: 0.4rem; border: 1px solid #cccccc; border-radius: 4px; box-sizing: border-box;
+         }
+         button { cursor: pointer; background: #eeeeee; font-weight: 600; }
+         button:hover { background: #dddddd; }
+         button:disabled { opacity: 0.4; cursor: not-allowed; }
+         .loading { display: flex; align-items: center; justify-content: center; height: 100vh; color: #777777; }
+         svg { cursor: move; }
+         svg:active, svg.panning { cursor: grabbing; }
+         small { font-size: 0.75rem; color: #666666; }
+         .multi-selector { display: flex; flex-direction: column; height: 100%; }
+         .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+         .search-row input { flex: 1; }
+         .list { flex: 1; overflow: auto; border: 1px solid #ccc; border-radius: 4px; }
+         .list > div { padding: 0.5rem; cursor: pointer; border-bottom: 1px solid #eee; }
+         .list > div:last-child { border-bottom: none; }
+         .list > div:hover { background: #f0f0f0; }
+         .list > div.selected { background: #007acc; color: white; font-weight: bold; }
+         .empty { padding: 0.5rem; color: #666; font-style: italic; }
+         .selected-display { margin-top: 1rem; border-top: 1px dashed #ccc; padding-top: 0.75rem; }
+         .pills { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+         .pill { background: #007acc; color: #fff; padding: 0.25rem 0.5rem; border-radius: 1rem; display: flex; align-items: center; gap: 0.25rem; font-size: 0.9em; }
+         .pill button { background: none; border: none; color: #fff; font-weight: bold; cursor: pointer; padding: 0; line-height: 1; }
+      </style>
+   </head>
+   <body>
+      <div id="app" class="loading">Loading map creator…</div>
+      <script src="https://cdn.jsdelivr.net/npm/geojson-rewind@0.3.1/geojson-rewind.js"></script>
+      <script type="module">
+         // State
+         let d3, versor, topojson, geoMollweide, geoPolyhedralWaterman, geoCentroid;
+         let rewind;
+         let turfBBox;
+         let panStart = { x: 0, y: 0, transform: { x: 0, y: 0, k: 1, toString: () => `translate(0,0) scale(1)` } };
+         let showLabels = true;
+         let labelFontSize = 12;
+         let labelStrokeColor = '#ffffff';
+         let labelStrokeWidth = 1;
+         let outputWidth = 1920;
+         let outputHeight = 1080;
+         const dimensionPresets = [
+           { name: 'Web (1200×628)', w: 1200, h: 628 },
+           { name: 'HD (1920×1080)', w: 1920, h: 1080 },
+           { name: '4K (3840×2160)', w: 3840, h: 2160 },
+           { name: 'Custom', w: 1920, h: 1080 }
+         ];
+         let selectedPreset = dimensionPresets[1];
+         const basemapModes = {
+           planet: { name: 'Planet Labs', ocean: '#d2d2d2', land: '#ffffff', stroke: '#cccccc', grid: '#ffffff', label: '#333333', highlight: '#009DA5' },
+           light: { name: 'Light', ocean: '#e8eef3', land: '#ffffff', stroke: '#cccccc', grid: '#bbccddee', label: '#333333', highlight: '#2d7be5' },
+           dark: { name: 'Dark', ocean: '#1e1e1e', land: '#252525', stroke: '#404040', grid: '#333333', label: '#dddddd', highlight: '#ffa600' },
+           high: { name: 'High-contrast', ocean: '#000000', land: '#ffffff', stroke: '#000000', grid: '#ff00ff', label: '#000000', highlight: '#ff00ff' },
+           custom: { name: 'Custom', ocean: '#e8eef3', land: '#ffffff', stroke: '#cccccc', grid: '#bbccddee', label: '#333333', highlight: '#2d7be5' }
+         };
+         let basemapKey = 'planet';
+         let customOceanFill = '#e8eef3';
+         let customLandFill = '#ffffff';
+         let customLandStroke = '#cccccc';
+         let customGraticuleStroke = '#bbccddee';
+         let customLabelFill = '#333333';
+         let customHighlightFill = '#2d7be5';
+         let oceanFill = basemapModes.planet.ocean;
+         let landFill = basemapModes.planet.land;
+         let landStroke = basemapModes.planet.stroke;
+         let landStrokeWidth = 0.8;
+         let highlightFill = basemapModes.planet.highlight;
+         let graticuleStroke = basemapModes.planet.grid;
+         let graticuleStrokeWidth = 0.5;
+         let labelFill = basemapModes.planet.label;
+         let container, svg;
+         let viewW = 0, viewH = 0;
+         let projections = [];
+         let selectedProjectionId = 'equalEarth';
+         let projection, path, graticule, zoomBehavior;
+         let currentTransform = { x: 0, y: 0, k: 1, toString: () => `translate(0,0) scale(1)` };
+         const rotation = { x: 0, y: 0, z: 0 };
+         let countries = [], borders = null;
+         let centerLon = 0;
+         let centerLat = 0;
+         let mapDataSources = [], selectedDataSource;
+         let selectedCountryNames = [];
+         let zoomSlider = 1;
+         let isReady = false;
+         let isPanning = false;
+         let searchTerm = '';
+         
+         // Utilities
+         const debounce = (fn, ms = 120) => {
+           let t;
+           return (...a) => {
+             clearTimeout(t);
+             t = setTimeout(() => fn(...a), ms);
+           };
+         };
+         
+         // Initialize
+         async function init() {
+           // Load libraries
+         const [d3m, projM, versorM, topojsonM, turfM] = await Promise.all([
+         import('https://cdn.jsdelivr.net/npm/d3@7/+esm'),
+         import('https://cdn.jsdelivr.net/npm/d3-geo-projection@4/+esm'),
+         import('https://cdn.jsdelivr.net/npm/versor@0/+esm'),
+         import('https://cdn.jsdelivr.net/npm/topojson-client@3/+esm'),
+         import('https://cdn.jsdelivr.net/npm/@turf/turf@6/+esm')
+         ]);
+         d3 = d3m;
+         ({ geoMollweide, geoPolyhedralWaterman, geoCentroid } = projM);
+         versor = versorM.default;
+         topojson = topojsonM;
+         rewind   = window.geojsonRewind.rewind;
+         turfBBox = turfM.bbox;
+         
+           // Projections
+           projections = [
+             { id: 'mercator', name: 'Mercator', p: d3.geoMercator() },
+             { id: 'albersUsa', name: 'Albers USA', p: d3.geoAlbersUsa() },
+             { id: 'azimuthal', name: 'Azimuthal Equal Area', p: d3.geoAzimuthalEqualArea() },
+             { id: 'conicEqual', name: 'Conic Equal Area', p: d3.geoConicEqualArea() },
+             { id: 'conicConformal', name: 'Conic Conformal', p: d3.geoConicConformal() },
+             { id: 'conicEquidistant', name: 'Conic Equidistant', p: d3.geoConicEquidistant() },
+             { id: 'equalEarth', name: 'Equal Earth', p: d3.geoEqualEarth() },
+             { id: 'equirect', name: 'Equirectangular', p: d3.geoEquirectangular() },
+             { id: 'mollweide', name: 'Mollweide', p: geoMollweide() },
+             { id: 'orthographic', name: 'Orthographic', p: d3.geoOrthographic() },
+             { id: 'waterman', name: 'Waterman (Butterfly)', p: geoPolyhedralWaterman() }
+           ];
+         
+           // Load TopoJSONs
+           const [t110, t50, t10] = await Promise.all([
+         fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_110m_admin_0_countries_TOPOJSON_compact.json').then(r => r.json()),
+         fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_50m_admin_0_countries_TOPOJSON_compact.json').then(r => r.json()),
+         fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_10m_admin_0_countries_usa_TOPOJSON_compact.json').then(r => r.json())
+         ]);
+           mapDataSources = [
+             { name: 'Low Res (110 m)', data: t110, object: Object.keys(t110.objects)[0] },
+             { name: 'Med Res (50 m)', data: t50, object: Object.keys(t50.objects)[0] },
+             { name: 'High Res (10 m)', data: t10, object: Object.keys(t10.objects)[0] }
+           ];
+           selectedDataSource = mapDataSources[1];
+         
+           graticule = d3.geoGraticule();
+           await loadData();
+           renderUI();
+           isReady = true;
+           setupInteractions();
+           onResize();
+           window.addEventListener('resize', onResize);
+         }
+         
+         // Load data
+         async function loadData() {
+           if (!selectedDataSource || !topojson) return;
+           const { data, object } = selectedDataSource;
+           const fc = topojson.feature(data, data.objects[object]);
+           countries = fc.features;
+           borders = topojson.mesh(data, data.objects[object], (a, b) => a !== b);
+           updateCountrySelector();
+           updateMap();
+         }
+         
+         // Resize handler
+         const onResize = debounce(() => {
+           if (!container) return;
+           viewW = container.clientWidth;
+           viewH = container.clientHeight;
+           updateMap();
+         });
+         
+         // Interactions
+         function setupInteractions() {
+           const svgSel = d3.select(svg);
+           zoomBehavior = d3.zoom()
+             .scaleExtent([1, 40])
+             .on('zoom', e => {
+               currentTransform = e.transform;
+               zoomSlider = +e.transform.k.toFixed(1);
+               document.querySelector('#zoom-slider').value = zoomSlider;
+               document.querySelector('#zoom-value').textContent = `${zoomSlider.toFixed(1)}× • ${selectedProjectionId === 'orthographic' ? 'Rotate' : 'Pan'}`;
+               updateMap();
+             });
+           svgSel.call(zoomBehavior);
+           svgSel.select('g').call(
+             d3.drag()
+               .on('start', dragStart)
+               .on('drag', dragMove)
+               .on('end', () => {
+                 isPanning = false;
+                 svg.classList.remove('panning');
+               })
+           );
+         }
+         
+         function dragStart(event) {
+           isPanning = true;
+           svg.classList.add('panning');
+           if (selectedProjectionId === 'orthographic') {
+             const [x, y] = [event.x, event.y];
+             panStart = {
+               v0: versor.cartesian(projection.invert([x, y])),
+               q0: versor.rotation(projection.rotate()),
+               r0: projection.rotate()
+             };
+           } else {
+             panStart = { x: event.x, y: event.y, transform: currentTransform };
+           }
+         }
+         
+         function dragMove(event) {
+           if (selectedProjectionId === 'orthographic') {
+             const { v0, q0, r0 } = panStart;
+             const v1 = versor.cartesian(projection.rotate(r0).invert([event.x, event.y]));
+             const q1 = versor.multiply(q0, versor.delta(v0, v1));
+             [rotation.x, rotation.y, rotation.z] = versor.rotation(q1);
+           } else {
+             const dx = (event.x - panStart.x) / panStart.transform.k;
+             const dy = (event.y - panStart.y) / panStart.transform.k;
+             const t2 = panStart.transform.translate(dx, dy);
+             d3.select(svg).call(zoomBehavior.transform, t2);
+           }
+           updateMap();
+         }
+         
+         // Update projection
+         function updateProjection() {
+           const selectedProjection = projections.find(p => p.id === selectedProjectionId);
+           if (!isReady || !viewW || !viewH || !countries.length || !selectedProjection) return;
+           const base = selectedProjection.p.copy?.() ?? selectedProjection.p;
+           projection = base.fitSize([viewW, viewH], { type: 'FeatureCollection', features: countries });
+           if (selectedProjectionId === 'orthographic') {
+             projection.rotate([rotation.x, rotation.y]);
+           } else {
+             projection.center([centerLon, centerLat]);
+           }
+           path = d3.geoPath().projection(projection);
+           updateMap();
+         }
+         
+         // Update colors
+         function updateColors() {
+           if (basemapKey === 'custom') {
+             oceanFill = customOceanFill;
+             landFill = customLandFill;
+             landStroke = customLandStroke;
+             graticuleStroke = customGraticuleStroke;
+             labelFill = customLabelFill;
+             highlightFill = customHighlightFill;
+           } else {
+             ({ ocean: oceanFill, land: landFill, stroke: landStroke, grid: graticuleStroke, label: labelFill, highlight: highlightFill } = basemapModes[basemapKey]);
+           }
+           updateMap();
+         }
+         
+         // Render UI
+         function renderUI() {
+           document.querySelector('#app').innerHTML = `
+             <div class="grid">
+               <aside class="controls">
+                 <h3>Dimensions</h3>
+                 <label>
+                   Preset
+                   <select id="preset">
+                     ${dimensionPresets.map(p => `<option value="${p.name}" ${p.name === selectedPreset.name ? 'selected' : ''}>${p.name}</option>`).join('')}
+                   </select>
+                 </label>
+                 <div id="custom-dimensions" style="display: ${selectedPreset.name === 'Custom' ? 'block' : 'none'}">
+                   <label>Width <input type="number" id="output-width" value="${outputWidth}" min="100"></label>
+                   <label>Height <input type="number" id="output-height" value="${outputHeight}" min="100"></label>
+                 </div>
+         
+                 <h3>Basemap</h3>
+                 <label>
+                   Theme
+                   <select id="basemap">
+                     ${Object.entries(basemapModes).map(([k, m]) => `<option value="${k}" ${k === basemapKey ? 'selected' : ''}>${m.name}</option>`).join('')}
+                   </select>
+                 </label>
+                 <div id="custom-colors" style="display: ${basemapKey === 'custom' ? 'block' : 'none'}">
+                   <label>Ocean <input type="color" id="custom-ocean" value="${customOceanFill}"></label>
+                   <label>Land <input type="color" id="custom-land" value="${customLandFill}"></label>
+                   <label>Stroke <input type="color" id="custom-stroke" value="${customLandStroke}"></label>
+                   <label>Grid <input type="color" id="custom-grid" value="${customGraticuleStroke}"></label>
+                   <label>Label <input type="color" id="custom-label" value="${customLabelFill}"></label>
+                   <label>Highlight <input type="color" id="custom-highlight" value="${customHighlightFill}"></label>
+                 </div>
+         
+                 <h3>Resolution</h3>
+                 <label>
+                   Data
+                   <select id="resolution">
+                     ${mapDataSources.map(ms => `<option value="${ms.name}" ${ms.name === selectedDataSource.name ? 'selected' : ''}>${ms.name}</option>`).join('')}
+                   </select>
+                 </label>
+         
+                 <h3>Projection</h3>
+                 <label>
+                   Type
+                   <select id="projection">
+                     ${projections.map(p => `<option value="${p.id}" ${p.id === selectedProjectionId ? 'selected' : ''}>${p.name}</option>`).join('')}
+                   </select>
+                 </label>
+         
+                 <h3>Zoom & Pan</h3>
+                 <label>
+                   Zoom
+                   <input type="range" id="zoom-slider" min="1" max="10" step="0.1" value="${zoomSlider}">
+                   <small id="zoom-value">${zoomSlider.toFixed(1)}× • ${selectedProjectionId === 'orthographic' ? 'Rotate' : 'Pan'}</small>
+                 </label>
+         
+                 <h3>Center</h3>
+                 <label>
+                   Longitude
+                   <input type="range" id="center-lon" min="-180" max="180" step="1" value="${centerLon}">
+                   <span>${centerLon.toFixed(0)}°</span>
+                 </label>
+                 <label>
+                   Latitude
+                   <input type="range" id="center-lat" min="-90" max="90" step="1" value="${centerLat}">
+                   <span>${centerLat.toFixed(0)}°</span>
+                 </label>
+                 <small>Use these to reposition the map instead of dragging</small>
+         
+                 <h3>Labels</h3>
+                 <label>
+                   <input type="checkbox" id="show-labels" ${showLabels ? 'checked' : ''}>
+                   Show country labels
+                 </label>
+                 <div id="label-options" style="display: ${showLabels ? 'block' : 'none'}">
+                   <label>Font size <input type="number" id="label-font-size" min="6" max="36" value="${labelFontSize}"></label>
+                   <label>Fill <input type="color" id="label-fill" value="${labelFill}"></label>
+                   <label>Stroke <input type="color" id="label-stroke" value="${labelStrokeColor}"></label>
+                   <label>Stroke W <input type="range" id="label-stroke-width" min="0" max="3" step="0.25" value="${labelStrokeWidth}">
+                     <span>${labelStrokeWidth}</span>
+                   </label>
+                 </div>
+         
+                 <h3>Locate</h3>
+                 <input type="text" id="geocoder" placeholder="Search location...">
+                 <button id="reset-view">Reset view</button>
+         
+                 <h3>Download</h3>
+                 <button id="download-svg">SVG</button>
+                 <button id="download-png">PNG</button>
+               </aside>
+         
+               <main id="map-container" class="mapwrap">
+                 <svg id="map-svg" width="0" height="0"></svg>
+               </main>
+         
+               <aside class="selector">
+                 <div class="multi-selector">
+                   <div class="search-row">
+                     <input type="text" id="country-search" placeholder="Search countries..." aria-label="Filter country list">
+                     <button id="reset-countries" ${selectedCountryNames.length ? '' : 'disabled'}>Reset</button>
+                   </div>
+                   <div class="list" role="listbox" aria-multiselectable="true" id="country-list"></div>
+                   <div class="selected-display">
+                     <strong>Selected:</strong>
+                     <div class="pills" id="selected-countries"></div>
+                   </div>
+                 </div>
+               </aside>
+             </div>
+           `;
+           container = document.querySelector('#map-container');
+           svg = document.querySelector('#map-svg');
+           addEventListeners();
+           updateMap();
+         }
+         
+         // Event listeners
+         function addEventListeners() {
+           document.querySelector('#preset').addEventListener('change', e => {
+             selectedPreset = dimensionPresets.find(p => p.name === e.target.value);
+             outputWidth = selectedPreset.w;
+             outputHeight = selectedPreset.h;
+             document.querySelector('#custom-dimensions').style.display = selectedPreset.name === 'Custom' ? 'block' : 'none';
+             if (selectedPreset.name === 'Custom') {
+               document.querySelector('#output-width').value = outputWidth;
+               document.querySelector('#output-height').value = outputHeight;
+             }
+           });
+           document.querySelector('#output-width').addEventListener('input', e => {
+             outputWidth = +e.target.value;
+           });
+           document.querySelector('#output-height').addEventListener('input', e => {
+             outputHeight = +e.target.value;
+           });
+           document.querySelector('#basemap').addEventListener('change', e => {
+             basemapKey = e.target.value;
+             document.querySelector('#custom-colors').style.display = basemapKey === 'custom' ? 'block' : 'none';
+             updateColors();
+           });
+           document.querySelector('#custom-ocean').addEventListener('input', e => {
+             customOceanFill = e.target.value;
+             updateColors();
+           });
+           document.querySelector('#custom-land').addEventListener('input', e => {
+             customLandFill = e.target.value;
+             updateColors();
+           });
+           document.querySelector('#custom-stroke').addEventListener('input', e => {
+             customLandStroke = e.target.value;
+             updateColors();
+           });
+           document.querySelector('#custom-grid').addEventListener('input', e => {
+             customGraticuleStroke = e.target.value;
+             updateColors();
+           });
+           document.querySelector('#custom-label').addEventListener('input', e => {
+             customLabelFill = e.target.value;
+             updateColors();
+           });
+           document.querySelector('#custom-highlight').addEventListener('input', e => {
+             customHighlightFill = e.target.value;
+             updateColors();
+           });
+           document.querySelector('#resolution').addEventListener('change', e => {
+             selectedDataSource = mapDataSources.find(ms => ms.name === e.target.value);
+             loadData();
+           });
+           document.querySelector('#projection').addEventListener('change', e => {
+             selectedProjectionId = e.target.value;
+             updateProjection();
+           });
+           document.querySelector('#zoom-slider').addEventListener('input', e => {
+             zoomSlider = +e.target.value;
+             d3.select(svg).call(zoomBehavior.scaleTo, zoomSlider);
+           });
+           document.querySelector('#center-lon').addEventListener('input', e => {
+             centerLon = +e.target.value;
+             document.querySelector('#center-lon + span').textContent = `${centerLon.toFixed(0)}°`;
+             updateProjection();
+           });
+           document.querySelector('#center-lat').addEventListener('input', e => {
+             centerLat = +e.target.value;
+             document.querySelector('#center-lat + span').textContent = `${centerLat.toFixed(0)}°`;
+             updateProjection();
+           });
+           document.querySelector('#show-labels').addEventListener('change', e => {
+             showLabels = e.target.checked;
+             document.querySelector('#label-options').style.display = showLabels ? 'block' : 'none';
+             updateMap();
+           });
+           document.querySelector('#label-font-size').addEventListener('input', e => {
+             labelFontSize = +e.target.value;
+             updateMap();
+           });
+           document.querySelector('#label-fill').addEventListener('input', e => {
+             labelFill = e.target.value;
+             updateMap();
+           });
+           document.querySelector('#label-stroke').addEventListener('input', e => {
+             labelStrokeColor = e.target.value;
+             updateMap();
+           });
+           document.querySelector('#label-stroke-width').addEventListener('input', e => {
+             labelStrokeWidth = +e.target.value;
+             document.querySelector('#label-stroke-width + span').textContent = labelStrokeWidth;
+             updateMap();
+           });
+           document.querySelector('#geocoder').addEventListener('input', e => {
+             // Placeholder for geocoding logic
+           });
+           document.querySelector('#reset-view').addEventListener('click', resetView);
+           document.querySelector('#download-svg').addEventListener('click', () => download('svg'));
+           document.querySelector('#download-png').addEventListener('click', () => download('png'));
+           document.querySelector('#country-search').addEventListener('input', e => {
+             searchTerm = e.target.value;
+             updateCountrySelector();
+           });
+           document.querySelector('#reset-countries').addEventListener('click', () => {
+             selectedCountryNames = [];
+             updateCountrySelector();
+             updateMap();
+           });
+         }
+         
+         // Update country selector
+         function updateCountrySelector() {
+           const allNames = countries.map(c => c.properties.NAME).sort();
+           const filtered = searchTerm ? allNames.filter(n => n.toLowerCase().includes(searchTerm.toLowerCase())) : allNames;
+           document.querySelector('#country-list').innerHTML = filtered.length
+             ? filtered.map(name => `
+                 <div
+                   class="${selectedCountryNames.includes(name) ? 'selected' : ''}"
+                   role="option"
+                   aria-selected="${selectedCountryNames.includes(name)}"
+                   tabindex="0"
+                 >${name}</div>
+               `).join('')
+             : `<div class="empty">No matches for "${searchTerm}"</div>`;
+           document.querySelector('#selected-countries').innerHTML = selectedCountryNames.length
+             ? selectedCountryNames.map(nm => `
+                 <span class="pill">
+                   ${nm}
+                   <button aria-label="Remove ${nm}">×</button>
+                 </span>
+               `).join('')
+             : '<em>None</em>';
+           document.querySelector('#reset-countries').disabled = !selectedCountryNames.length;
+           document.querySelectorAll('#country-list > div:not(.empty)').forEach(div => {
+             div.addEventListener('click', () => toggleCountry(div.textContent.trim()));
+             div.addEventListener('keydown', e => {
+               if (e.key === 'Enter' || e.key === ' ') {
+                 e.preventDefault();
+                 toggleCountry(div.textContent.trim());
+               }
+             });
+           });
+           document.querySelectorAll('#selected-countries .pill button').forEach(btn => {
+             btn.addEventListener('click', () => toggleCountry(btn.parentElement.textContent.trim().slice(0, -1)));
+           });
+         }
+         
+         function toggleCountry(name) {
+           if (selectedCountryNames.includes(name)) {
+             selectedCountryNames = selectedCountryNames.filter(n => n !== name);
+           } else {
+             selectedCountryNames = [...selectedCountryNames, name];
+           }
+           updateCountrySelector();
+           updateMap();
+         }
+         
+         // Update map
+         function updateMap() {
+           if (!svg || !path || !viewW || !viewH) return;
+           svg.setAttribute('width', viewW);
+           svg.setAttribute('height', viewH);
+           svg.innerHTML = `
+             <g transform="${currentTransform.toString()}">
+               <path d="${path({ type: 'Sphere' })}" fill="${oceanFill}"></path>
+               <path d="${path(graticule())}" fill="none" stroke="${graticuleStroke}" stroke-width="${graticuleStrokeWidth / currentTransform.k}"></path>
+               ${countries.map((c, i) => `
+                 <path
+                   d="${path(c)}"
+                   fill="${selectedCountryNames.includes(c.properties.NAME) ? highlightFill : landFill}"
+                   stroke="${landStroke}"
+                   stroke-width="${landStrokeWidth / currentTransform.k}"
+                 >
+                   <title>${c.properties.NAME}</title>
+                 </path>
+               `).join('')}
+               <path d="${path(borders)}" fill="none" stroke="${landStroke}" stroke-width="${landStrokeWidth / currentTransform.k}"></path>
+               ${showLabels && selectedCountryNames.length ? `
+                 <g pointer-events="none" font-family="sans-serif" paint-order="stroke fill">
+                   ${countries.filter(c => selectedCountryNames.includes(c.properties.NAME)).map(c => {
+                     const [cx, cy] = path.centroid(c);
+                     return isFinite(cx) && isFinite(cy) ? `
+                       <text
+                         x="${cx}" y="${cy}"
+                         text-anchor="middle" dy="0.35em"
+                         fill="${labelFill}"
+                         stroke="${labelStrokeColor}"
+                         stroke-width="${labelStrokeWidth / currentTransform.k}"
+                         font-size="${labelFontSize / currentTransform.k}px"
+                       >${c.properties.NAME}</text>
+                     ` : '';
+                   }).join('')}
+                 </g>
+               ` : ''}
+             </g>
+           `;
+         }
+         
+         // Reset view
+         function resetView() {
+           d3.select(svg)
+             .transition().duration(600)
+             .call(zoomBehavior.transform, d3.zoomIdentity);
+           rotation.x = rotation.y = rotation.z = 0;
+           zoomSlider = 1;
+           document.querySelector('#zoom-slider').value = zoomSlider;
+           document.querySelector('#zoom-value').textContent = `${zoomSlider.toFixed(1)}× • ${selectedProjectionId === 'orthographic' ? 'Rotate' : 'Pan'}`;
+           updateMap();
+         }
+         
+         // Download
+         function download(type = 'svg') {
+           if (!isReady || !d3) return;
+           const base = projections.find(p => p.id === selectedProjectionId).p.copy?.() ?? projections.find(p => p.id === selectedProjectionId).p;
+           const dlProj = base.fitSize([outputWidth, outputHeight], { type: 'FeatureCollection', features: countries });
+           if (selectedProjectionId === 'orthographic') {
+             dlProj.rotate([rotation.x, rotation.y]);
+           } else {
+             dlProj.center([centerLon, centerLat]);
+           }
+           const dlPath = d3.geoPath().projection(dlProj);
+           const t = d3.zoomTransform(svg);
+           const root = d3.create('svg')
+             .attr('xmlns', 'http://www.w3.org/2000/svg')
+             .attr('width', outputWidth)
+             .attr('height', outputHeight);
+           if (type !== 'png') {
+             root.append('rect')
+               .attr('width', outputWidth)
+               .attr('height', outputHeight)
+               .attr('fill', oceanFill);
+           }
+           const g = root.append('g')
+             .attr('id', 'map')
+             .attr('transform', t.toString());
+           g.append('path')
+             .attr('d', dlPath({ type: 'Sphere' }))
+             .attr('fill', oceanFill)
+             .attr('id', 'sphere');
+           g.append('path')
+             .attr('d', dlPath(graticule()))
+             .attr('fill', 'none')
+             .attr('stroke', graticuleStroke)
+             .attr('stroke-width', graticuleStrokeWidth / t.k)
+             .attr('id', 'graticule');
+           const regions = d3.group(countries, d => d.properties.REGION_UN || 'Other');
+           for (const [region, feats] of regions) {
+             const rg = g.append('g')
+               .attr('id', `region_${region.replace(/\s+/g, '_')}`);
+             feats.forEach(c => {
+               rg.append('path')
+                 .attr('d', dlPath(c))
+                 .attr('fill', selectedCountryNames.includes(c.properties.NAME) ? highlightFill : landFill)
+                 .attr('stroke', landStroke)
+                 .attr('stroke-width', landStrokeWidth / t.k)
+                 .attr('id', `country_${c.properties.ADM0_A3}`);
+             });
+           }
+           g.append('path')
+             .attr('d', dlPath(borders))
+             .attr('fill', 'none')
+             .attr('stroke', landStroke)
+             .attr('stroke-width', landStrokeWidth / t.k)
+             .attr('id', 'borders');
+           if (showLabels && selectedCountryNames.length) {
+             const lbl = g.append('g')
+               .attr('id', 'labels')
+               .attr('font-family', 'sans-serif')
+               .attr('font-size', `${labelFontSize / t.k}px`)
+               .attr('fill', labelFill)
+               .attr('stroke', labelStrokeColor)
+               .attr('stroke-width', labelStrokeWidth / t.k)
+               .attr('paint-order', 'stroke fill');
+             countries
+               .filter(c => selectedCountryNames.includes(c.properties.NAME))
+               .forEach(c => {
+                 const [cx, cy] = dlPath.centroid(c);
+                 if (isFinite(cx) && isFinite(cy)) {
+                   lbl.append('text')
+                     .attr('x', cx)
+                     .attr('y', cy)
+                     .attr('text-anchor', 'middle')
+                     .attr('dy', '0.35em')
+                     .text(c.properties.NAME);
+                 }
+               });
+           }
+           const svgString = new XMLSerializer().serializeToString(root.node());
+           const blob = new Blob([svgString], { type: 'image/svg+xml' });
+           const url = URL.createObjectURL(blob);
+           const a = document.createElement('a');
+           if (type === 'svg') {
+             a.href = url;
+             a.download = 'world-map.svg';
+             a.click();
+             URL.revokeObjectURL(url);
+             return;
+           }
+           const img = new Image();
+           img.onload = () => {
+             const canvas = document.createElement('canvas');
+             canvas.width = outputWidth;
+             canvas.height = outputHeight;
+             const ctx = canvas.getContext('2d');
+             ctx.drawImage(img, 0, 0);
+             a.href = canvas.toDataURL('image/png');
+             a.download = 'world-map.png';
+             a.click();
+             URL.revokeObjectURL(url);
+           };
+           img.src = url;
+         }
+         
+         // Initialize
+         init();
+      </script>
+   </body>
 </html>
