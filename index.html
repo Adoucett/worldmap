@@ -146,10 +146,10 @@
 
       // Load TopoJSONs
       const [t110, t50, t10] = await Promise.all([
-        fetch('/src/lib/assets/ne_110m_admin_0_countries_TOPOJSON.json').then(r => r.json()),
-        fetch('/src/lib/assets/ne_50m_admin_0_countries_TOPOJSON.json').then(r => r.json()),
-        fetch('/src/lib/assets/ne_10m_admin_0_countries_usa_TOPOJSON.json').then(r => r.json())
-      ]);
+  fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_110m_admin_0_countries_TOPOJSON_compact.json').then(r => r.json()),
+  fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_50m_admin_0_countries_TOPOJSON_compact.json').then(r => r.json()),
+  fetch('https://raw.githubusercontent.com/Adoucett/worldmap/refs/heads/main/lib/assets/ne_10m_admin_0_countries_usa_TOPOJSON_compact.json').then(r => r.json())
+]);
       mapDataSources = [
         { name: 'Low Res (110 m)', data: t110, object: Object.keys(t110.objects)[0] },
         { name: 'Med Res (50 m)', data: t50, object: Object.keys(t50.objects)[0] },
