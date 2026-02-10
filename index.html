@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <link rel="icon" href="data:,"> <title>Planet Map Creator</title>
+  <link rel="icon" href="data:,">
+  <title>Planet Map Creator</title>
   <style>
     :root {
       --c-accent: #009DA5;
@@ -181,20 +182,29 @@ import { geoPolyhedralWaterman } from 'https://cdn.jsdelivr.net/npm/d3-geo-proje
 
 // --- State ---
 const state = {
-  mode: 'world', // world | us
+  isReady: false, // Critical flag to prevent race conditions
+  mode: 'world',
   features: [],
   borders: null,
   selected: new Set(),
   projId: 'equalEarth',
   theme: 'planet',
   colors: {},
-  transform: { k: 1, x: 0, y: 0 }, // For 2D
-  rotation: [0, 0, 0], // For 3D [lambda, phi, gamma]
+  transform: { k: 1, x: 0, y: 0 },
+  rotation: [0, 0, 0],
   width: 0,
   height: 0,
   zoom: 1,
   showLabels: true,
-  labelSize: 10
+  labelSize: 10,
+  // D3 References stored in state
+  svg: null,
+  gMap: null,
+  pathSphere: null,
+  pathGrid: null,
+  gFeats: null,
+  pathBorders: null,
+  gLabels: null
 };
 
 // --- Config ---
@@ -213,28 +223,26 @@ const PROJECTIONS = {
   albersUsa:  { name: 'Albers USA', type: 'fixed', fn: d3.geoAlbersUsa }
 };
 
-// --- Globals ---
-let svg, gMap, pathSphere, pathGrid, gFeats, pathBorders, gLabels;
-let projection, pathGen;
-let zoomBehavior, dragBehavior;
+// --- Globals (for projection logic) ---
+let projection, pathGen, zoomBehavior, dragBehavior;
 
 // --- Init ---
 async function init() {
   console.log("Initializing Map Engine...");
   
-  // 1. Initialize Global SVG References
-  svg = d3.select('#map-svg');
-  if (svg.empty()) {
+  // 1. Initialize DOM References in State
+  state.svg = d3.select('#map-svg');
+  if (state.svg.empty()) {
     console.error("Critical Error: SVG container not found.");
     return;
   }
   
-  gMap = svg.append('g');
-  pathSphere = gMap.append('path').attr('class', 'sphere');
-  pathGrid = gMap.append('path').attr('class', 'grid').attr('fill', 'none');
-  gFeats = gMap.append('g');
-  pathBorders = gMap.append('path').attr('class', 'borders').attr('fill', 'none');
-  gLabels = gMap.append('g').style('pointer-events', 'none');
+  state.gMap = state.svg.append('g');
+  state.pathSphere = state.gMap.append('path').attr('class', 'sphere');
+  state.pathGrid = state.gMap.append('path').attr('class', 'grid').attr('fill', 'none');
+  state.gFeats = state.gMap.append('g');
+  state.pathBorders = state.gMap.append('path').attr('class', 'borders').attr('fill', 'none');
+  state.gLabels = state.gMap.append('g').style('pointer-events', 'none');
 
   setupUI();
   updateTheme();
@@ -245,18 +253,22 @@ async function init() {
     if (r) {
       state.width = r.width;
       state.height = r.height;
-      updateProjection();
+      // Only update if ready
+      if (state.isReady) updateProjection();
     }
   };
   
   // 3. Load Data
   await loadData();
   
-  // 4. Initial Render & Listener Attach
+  // 4. Finalize Init
+  state.isReady = true; // Unlock updates
+  
   resize(); // Trigger first sizing
   window.addEventListener('resize', resize);
   
   setLoading(false);
+  updateProjection(); // Force first render
   console.log("Map Initialized.");
 }
 
@@ -288,17 +300,16 @@ function getName(d) { return d.properties.NAME || d.properties.name || 'Unknown'
 
 // --- Projection & Rendering ---
 function updateProjection() {
-  // CRITICAL: Safety check for svg
-  if (!svg || svg.empty()) return;
+  if (!state.isReady) return; // Guard clause
   
   const def = PROJECTIONS[state.projId];
   if (!def) return;
 
   // Reset SVG Transform (important when switching 2D <-> 3D)
   if (def.type === '3d') {
-    gMap.attr('transform', null);
+    state.gMap.attr('transform', null);
   } else {
-    gMap.attr('transform', `translate(${state.transform.x},${state.transform.y}) scale(${state.transform.k})`);
+    state.gMap.attr('transform', `translate(${state.transform.x},${state.transform.y}) scale(${state.transform.k})`);
   }
 
   // Create Projection
@@ -323,28 +334,24 @@ function updateProjection() {
 }
 
 function render() {
-  if (!pathGen || !svg) return; // Defensive check
+  if (!state.isReady || !pathGen) return;
 
   const colors = state.colors;
   const is3D = PROJECTIONS[state.projId].type === '3d';
   
   // Background
-  svg.style('background', is3D ? colors.ocean : '#e0e0e0');
+  state.svg.style('background', is3D ? colors.ocean : '#e0e0e0');
   
   // Sphere
   const sphereD = pathGen({type:'Sphere'});
-  if (sphereD) {
-      pathSphere.attr('d', sphereD).attr('fill', colors.ocean).attr('stroke', 'none');
-  }
+  if (sphereD) state.pathSphere.attr('d', sphereD).attr('fill', colors.ocean).attr('stroke', 'none');
 
   // Graticule
   const gridD = pathGen(d3.geoGraticule10());
-  if (gridD) {
-      pathGrid.attr('d', gridD).attr('stroke', colors.grid).attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
-  }
+  if (gridD) state.pathGrid.attr('d', gridD).attr('stroke', colors.grid).attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
 
   // Features
-  gFeats.selectAll('path')
+  state.gFeats.selectAll('path')
     .data(state.features, d => getName(d))
     .join('path')
     .attr('d', pathGen)
@@ -356,19 +363,15 @@ function render() {
   // Borders
   if (state.borders) {
     const borderD = pathGen(state.borders);
-    if(borderD) {
-        pathBorders.attr('d', borderD)
-          .attr('stroke', colors.stroke)
-          .attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
-    }
+    if(borderD) state.pathBorders.attr('d', borderD).attr('stroke', colors.stroke).attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
   } else {
-    pathBorders.attr('d', null);
+    state.pathBorders.attr('d', null);
   }
 
   // Labels
   if (state.showLabels) {
     const visible = state.features.filter(d => state.selected.has(getName(d)));
-    gLabels.selectAll('text')
+    state.gLabels.selectAll('text')
       .data(visible, d => getName(d))
       .join('text')
       .attr('transform', d => {
@@ -383,19 +386,21 @@ function render() {
       .attr('font-size', state.labelSize / (is3D ? 1 : state.transform.k))
       .style('text-shadow', '0px 0px 3px rgba(255,255,255,0.8)');
   } else {
-    gLabels.selectAll('text').remove();
+    state.gLabels.selectAll('text').remove();
   }
 }
 
 // --- Interactions ---
 function updateInteractions(type) {
-  // CRITICAL FIX: Ensure svg exists before attaching listeners
-  if (!svg || svg.empty()) return;
+  // Safe check
+  if (!state.svg || state.svg.empty()) return;
 
-  svg.on('.zoom', null).on('.drag', null);
+  // Clear listeners separately to avoid chaining issues on empty/undefined refs
+  state.svg.on('.zoom', null);
+  state.svg.on('.drag', null);
 
   if (type === '3d') {
-    // Globe Mode: Drag rotates, Wheel scales
+    // Globe Mode
     zoomBehavior = d3.zoom()
       .scaleExtent([0.5, 10])
       .on('zoom', e => {
@@ -405,17 +410,17 @@ function updateInteractions(type) {
         updateProjection(); 
       });
     
-    svg.call(zoomBehavior).on("mousedown.zoom", null);
-    svg.call(zoomBehavior.transform, d3.zoomIdentity.scale(state.zoom));
+    state.svg.call(zoomBehavior).on("mousedown.zoom", null);
+    state.svg.call(zoomBehavior.transform, d3.zoomIdentity.scale(state.zoom));
 
     dragBehavior = d3.drag()
       .on('start', dragStart)
       .on('drag', dragMove);
     
-    svg.call(dragBehavior);
+    state.svg.call(dragBehavior);
 
   } else {
-    // 2D Mode: Standard Zoom/Pan
+    // 2D Mode
     zoomBehavior = d3.zoom()
       .scaleExtent([1, 40])
       .on('zoom', e => {
@@ -423,23 +428,22 @@ function updateInteractions(type) {
         state.zoom = e.transform.k; 
         document.getElementById('zoom-range').value = state.zoom;
         document.getElementById('zoom-val').textContent = state.zoom.toFixed(1);
-        render(); // Efficient render
-        gMap.attr('transform', e.transform);
+        render(); 
+        state.gMap.attr('transform', e.transform);
       });
       
-    svg.call(zoomBehavior);
-    svg.call(zoomBehavior.transform, d3.zoomIdentity.translate(state.transform.x, state.transform.y).scale(state.transform.k));
+    state.svg.call(zoomBehavior);
+    state.svg.call(zoomBehavior.transform, d3.zoomIdentity.translate(state.transform.x, state.transform.y).scale(state.transform.k));
   }
 }
 
-// Versor Drag Logic
 let v0, q0, r0;
 function dragStart(event) {
   const p = d3.pointer(event, this);
   v0 = versor.cartesian(projection.invert(p));
   r0 = projection.rotate();
   q0 = versor.rotation(r0);
-  svg.style('cursor', 'grabbing');
+  state.svg.style('cursor', 'grabbing');
 }
 function dragMove(event) {
   const p = d3.pointer(event, this);
@@ -467,13 +471,18 @@ function setupUI() {
   };
   updateProjs();
 
+  // Mode Change
   document.getElementById('geo-mode').addEventListener('change', e => {
+    state.isReady = false; // Lock
     state.mode = e.target.value;
     state.selected.clear();
     state.rotation = [0,0,0]; 
     state.transform = {k:1, x:0, y:0};
     updateProjs();
-    loadData().then(updateProjection); // Ensure data is loaded before projecting
+    loadData().then(() => {
+      state.isReady = true; // Unlock
+      updateProjection();
+    });
   });
 
   document.getElementById('proj-select').addEventListener('change', e => {
@@ -491,7 +500,7 @@ function setupUI() {
     if (PROJECTIONS[state.projId].type === '3d') {
       updateProjection();
     } else {
-      svg.call(zoomBehavior.scaleTo, k);
+      state.svg.call(zoomBehavior.scaleTo, k);
     }
   });
 
@@ -533,8 +542,8 @@ function setupUI() {
   document.getElementById('dl-svg').addEventListener('click', () => exportMap('svg'));
   document.getElementById('dl-png').addEventListener('click', () => exportMap('png'));
   
-  // Fix cursor behavior
-  if(svg) svg.on('mouseup', () => svg.style('cursor', 'grab'));
+  // Fix cursor
+  if(state.svg) state.svg.on('mouseup', () => state.svg.style('cursor', 'grab'));
 }
 
 function updateTheme() {
@@ -576,7 +585,6 @@ function setLoading(active) {
   else l.classList.remove('active');
 }
 
-// --- Export ---
 function exportMap(type) {
   const res = document.getElementById('export-res').value;
   const dims = { web:[1200,630], hd:[1920,1080], '4k':[3840,2160] }[res];
