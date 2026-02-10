@@ -182,7 +182,7 @@ import { geoPolyhedralWaterman } from 'https://cdn.jsdelivr.net/npm/d3-geo-proje
 
 // --- State ---
 const state = {
-  isReady: false, // Critical flag to prevent race conditions
+  isReady: false, 
   mode: 'world',
   features: [],
   borders: null,
@@ -253,7 +253,6 @@ async function init() {
     if (r) {
       state.width = r.width;
       state.height = r.height;
-      // Only update if ready
       if (state.isReady) updateProjection();
     }
   };
@@ -262,13 +261,13 @@ async function init() {
   await loadData();
   
   // 4. Finalize Init
-  state.isReady = true; // Unlock updates
+  state.isReady = true; 
   
-  resize(); // Trigger first sizing
+  resize(); 
   window.addEventListener('resize', resize);
   
   setLoading(false);
-  updateProjection(); // Force first render
+  updateProjection(); 
   console.log("Map Initialized.");
 }
 
@@ -281,8 +280,10 @@ async function loadData() {
 
     if (state.mode === 'world') {
       const topo = await d3.json('./lib/assets/ne_50m_admin_0_countries_TOPOJSON_compact.json');
-      state.features = topojson.feature(topo, topo.objects.ne_50m_admin_0_countries).features;
-      state.borders = topojson.mesh(topo, topo.objects.ne_50m_admin_0_countries, (a, b) => a !== b);
+      // FIX: Dynamically find the key (it might be "countries" or "ne_50m...")
+      const key = Object.keys(topo.objects)[0]; 
+      state.features = topojson.feature(topo, topo.objects[key]).features;
+      state.borders = topojson.mesh(topo, topo.objects[key], (a, b) => a !== b);
     } else {
       const geo = await d3.json('./lib/assets/gz_2010_us_040_00_20m.json');
       state.features = geo.features;
@@ -292,7 +293,7 @@ async function loadData() {
     updateList();
   } catch (err) {
     console.error("Data Load Error:", err);
-    alert("Error loading map data. Please check your ./lib/assets folder structure.");
+    alert("Error loading map data: " + err.message);
   }
 }
 
@@ -300,7 +301,7 @@ function getName(d) { return d.properties.NAME || d.properties.name || 'Unknown'
 
 // --- Projection & Rendering ---
 function updateProjection() {
-  if (!state.isReady) return; // Guard clause
+  if (!state.isReady) return; 
   
   const def = PROJECTIONS[state.projId];
   if (!def) return;
@@ -381,7 +382,7 @@ function render() {
       })
       .attr('text-anchor', 'middle')
       .attr('dy', '0.35em')
-      .text(getName(d))
+      .text(d => getName(d)) // FIX: Was causing ReferenceError: d is not defined
       .attr('fill', colors.text)
       .attr('font-size', state.labelSize / (is3D ? 1 : state.transform.k))
       .style('text-shadow', '0px 0px 3px rgba(255,255,255,0.8)');
@@ -392,10 +393,8 @@ function render() {
 
 // --- Interactions ---
 function updateInteractions(type) {
-  // Safe check
   if (!state.svg || state.svg.empty()) return;
 
-  // Clear listeners separately to avoid chaining issues on empty/undefined refs
   state.svg.on('.zoom', null);
   state.svg.on('.drag', null);
 
@@ -473,14 +472,14 @@ function setupUI() {
 
   // Mode Change
   document.getElementById('geo-mode').addEventListener('change', e => {
-    state.isReady = false; // Lock
+    state.isReady = false; 
     state.mode = e.target.value;
     state.selected.clear();
     state.rotation = [0,0,0]; 
     state.transform = {k:1, x:0, y:0};
     updateProjs();
     loadData().then(() => {
-      state.isReady = true; // Unlock
+      state.isReady = true; 
       updateProjection();
     });
   });
@@ -542,7 +541,6 @@ function setupUI() {
   document.getElementById('dl-svg').addEventListener('click', () => exportMap('svg'));
   document.getElementById('dl-png').addEventListener('click', () => exportMap('png'));
   
-  // Fix cursor
   if(state.svg) state.svg.on('mouseup', () => state.svg.style('cursor', 'grab'));
 }
 
