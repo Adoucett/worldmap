@@ -3,621 +3,692 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Map Creator</title>
+  <title>Planet Map Creator</title>
   <style>
-    body { margin: 0; font-family: sans-serif; min-width: 1200px; }
-    .grid { display: grid; grid-template-columns: 300px minmax(600px,1fr) 300px; grid-template-rows: 100vh; width: 100vw; height: 100vh; box-sizing: border-box; }
-    .controls, .selector { padding: 1rem; overflow: auto; background: #fff; border-right: 1px solid #eee; display: flex; flex-direction: column; gap: .75rem; font-size: .86rem; }
-    .mapwrap { display:flex; align-items:center; justify-content:center; background:#fafafa; width:100%; height:100%; }
-    h3 { margin:.5rem 0 .2rem; font-weight:600; border-bottom:1px solid #eee; }
-    label { display:flex; align-items:center; gap:.5rem; }
-    select, input[type="number"], input[type="range"], input[type="color"], button { width:100%; padding:.4rem; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; }
-    button { cursor:pointer; background:#eee; font-weight:600; }
-    button:hover { background:#ddd; } button:disabled{opacity:.4; cursor:not-allowed;}
-    .loading { display:flex; align-items:center; justify-content:center; height:100vh; color:#777; }
-    svg { cursor:move; width:100%; height:100%; } svg:active, svg.panning { cursor:grabbing; }
-    small { font-size:.75rem; color:#666; }
-    .multi-selector { display:flex; flex-direction:column; height:100%; }
-    .search-row { display:flex; gap:.5rem; margin-bottom:.75rem; }
-    .search-row input { flex:1; }
-    .list { flex:1; overflow:auto; border:1px solid #ccc; border-radius:4px; }
-    .list > div { padding:.5rem; cursor:pointer; border-bottom:1px solid #eee; }
-    .list > div:last-child { border-bottom:none; } .list > div:hover{ background:#f0f0f0; }
-    .list > div.selected { background:#007acc; color:white; font-weight:bold; }
-    .empty { padding:.5rem; color:#666; font-style:italic; }
-    .selected-display { margin-top:1rem; border-top:1px dashed #ccc; padding-top:.75rem; }
-    .pills { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.5rem; }
-    .pill { background:#007acc; color:#fff; padding:.25rem .5rem; border-radius:1rem; display:flex; align-items:center; gap:.25rem; font-size:.9em; }
-    .pill button { background:none; border:none; color:#fff; font-weight:bold; cursor:pointer; padding:0; line-height:1; }
-    @media (max-width: 1200px) { .grid { grid-template-columns:300px minmax(600px,1fr) 300px; } }
+    :root {
+      --c-accent: #009DA5;
+      --c-accent-hover: #007d84;
+      --c-bg: #f8f9fa;
+      --c-panel: #ffffff;
+      --c-text: #333333;
+      --c-border: #e0e0e0;
+    }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--c-bg); color: var(--c-text); overflow: hidden; }
+    
+    /* Layout */
+    .grid { display: grid; grid-template-columns: 300px 1fr 300px; width: 100vw; height: 100vh; }
+    aside { background: var(--c-panel); border-right: 1px solid var(--c-border); display: flex; flex-direction: column; z-index: 10; overflow: hidden; }
+    aside.right { border-right: none; border-left: 1px solid var(--c-border); }
+    
+    /* Scrollable areas */
+    .scroll-y { overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 1.25rem; flex: 1; }
+    
+    /* Map Area */
+    main { position: relative; background: #e0e0e0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    svg { display: block; width: 100%; height: 100%; cursor: grab; }
+    svg:active { cursor: grabbing; }
+
+    /* Controls */
+    h3 { margin: 0 0 0.5rem 0; font-size: 0.85rem; text-transform: uppercase; color: var(--c-accent); border-bottom: 2px solid var(--c-accent); padding-bottom: 0.25rem; letter-spacing: 0.5px; }
+    label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; font-weight: 500; }
+    input, select, button { padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; background: #fff; width: 100%; box-sizing: border-box; }
+    input:focus, select:focus { border-color: var(--c-accent); outline: none; }
+    
+    /* Range Inputs */
+    .range-row { display: flex; align-items: center; gap: 0.5rem; }
+    input[type="range"] { flex: 1; padding: 0; }
+    .val-display { font-size: 0.8rem; color: #666; width: 3.5ch; text-align: right; }
+
+    /* Color Inputs */
+    .color-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    input[type="color"] { padding: 0; height: 32px; cursor: pointer; }
+
+    /* Buttons */
+    button { background: var(--c-accent); color: white; border: none; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: var(--c-accent-hover); }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #5a6268; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* List & Tags */
+    .search-box { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .list { border: 1px solid #ccc; border-radius: 4px; height: 300px; overflow-y: auto; background: #fafafa; }
+    .list-item { padding: 0.5rem; border-bottom: 1px solid #eee; cursor: pointer; font-size: 0.9rem; }
+    .list-item:hover { background: #f0f0f0; }
+    .list-item.selected { background: var(--c-accent); color: white; }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.5rem; }
+    .tag { background: var(--c-accent); color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: flex; align-items: center; gap: 4px; }
+    .tag span { cursor: pointer; font-weight: bold; }
+
+    /* Loading */
+    .loader { position: absolute; inset: 0; background: rgba(255,255,255,0.9); display: flex; align-items: center; justify-content: center; z-index: 50; transition: opacity 0.3s; pointer-events: none; opacity: 0; }
+    .loader.active { opacity: 1; pointer-events: all; }
   </style>
 </head>
 <body>
-  <div id="app" class="loading">Loading map creator…</div>
-  <script src="https://cdn.jsdelivr.net/npm/geojson-rewind@0.3.1/geojson-rewind.js"></script>
-  <script type="module">
-  // --- STATE ---
-  let d3, versor, topojson, geoMollweide, geoPolyhedralWaterman, geoCentroid;
-  let rewind = null;
 
-  // App state
-  const geographyModes = { world: 'World Countries', us: 'US States' };
-  let geoMode = 'world';
-  let isReady = false;
-
-  // Data state
-  let features = [], borders = null;
-  let mapDataSources = [], selectedDataSource;
-  let worldSources = [], usSources = [];
-  const dataCache = new Map();
-  let selectedNames = [], searchTerm = '';
-
-  // Map display state
-  let projections = [], selectedProjectionId = 'equalEarth';
-  let projection, path, graticule, zoomBehavior;
-  let currentTransform = { x: 0, y: 0, k: 1, toString: () => `translate(${currentTransform.x},${currentTransform.y}) scale(${currentTransform.k})` };
-  const rotation = { x: 0, y: 0, z: 0 };
-  let centerLon = 0, centerLat = 0, zoomSlider = 1;
-
-  // Theming & Style state
-  const basemapModes = {
-    planet: { name:'Planet Labs', ocean:'#d2d2d2', land:'#ffffff', stroke:'#cccccc', grid:'#ffffff', label:'#333333', highlight:'#009DA5' },
-    light:  { name:'Light',       ocean:'#e8eef3', land:'#ffffff', stroke:'#cccccc', grid:'#bbccdd', label:'#333333', highlight:'#2d7be5' },
-    dark:   { name:'Dark',        ocean:'#1e1e1e', land:'#252525', stroke:'#404040', grid:'#333333', label:'#dddddd', highlight:'#ffa600' },
-    high:   { name:'High-contrast', ocean:'#000000', land:'#ffffff', stroke:'#000000', grid:'#ff00ff', label:'#000000', highlight:'#ff00ff' },
-    custom: { name:'Custom',      ocean:'#e8eef3', land:'#ffffff', stroke:'#cccccc', grid:'#bbccdd', label:'#333333', highlight:'#2d7be5' }
-  };
-  let basemapKey = 'planet';
-  let customOceanFill = '#e8eef3', customLandFill = '#ffffff', customLandStroke = '#cccccc',
-      customGraticuleStroke = '#bbccdd', customLabelFill = '#333333', customHighlightFill = '#2d7be5';
-  let oceanFill, landFill, landStroke, highlightFill, graticuleStroke, labelFill;
-  let landStrokeWidth = 0.8, graticuleStrokeWidth = 0.5;
-  let showLabels = true, labelFontSize = 12, labelStrokeColor = '#ffffff', labelStrokeWidth = 1;
-
-  // Export & interaction state
-  let container, svg, viewW = 0, viewH = 0;
-  let panStart = {};
-  let outputWidth = 1920, outputHeight = 1080;
-  const dimensionPresets = [
-    { name:'Web (1200×628)', w:1200, h:628 }, { name:'HD (1920×1080)', w:1920, h:1080 },
-    { name:'4K (3840×2160)', w:3840, h:2160 }, { name:'Custom', w:1920, h:1080 }
-  ];
-  let selectedPreset = dimensionPresets[1];
-
-  // --- UTILITIES ---
-  const debounce = (fn, ms = 120) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
-  const getName = f => (f?.properties?.NAME ?? f?.properties?.name ?? 'Unknown');
-  async function fetchJSON(url) {
-    if (dataCache.has(url)) return dataCache.get(url);
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 15000);
-    try {
-      const r = await fetch(url, { signal: ctrl.signal });
-      if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-      const j = await r.json();
-      dataCache.set(url, j);
-      return j;
-    } finally { clearTimeout(t); }
-  }
-
-  function initThemeFromKey() {
-    const t = basemapModes[basemapKey];
-    oceanFill = t.ocean; landFill = t.land; landStroke = t.stroke;
-    graticuleStroke = t.grid; labelFill = t.label; highlightFill = t.highlight;
-  }
-
-  // --- INITIALIZATION ---
-  async function init() {
-    // Load libs
-    const [d3m, projM, versorM, topojsonM] = await Promise.all([
-      import('https://cdn.jsdelivr.net/npm/d3@7/+esm'),
-      import('https://cdn.jsdelivr.net/npm/d3-geo-projection@4/+esm'),
-      import('https://cdn.jsdelivr.net/npm/versor@0/+esm'),
-      import('https://cdn.jsdelivr.net/npm/topojson-client@3/+esm'),
-    ]);
-    d3 = d3m;
-    ({ geoMollweide, geoPolyhedralWaterman, geoCentroid } = projM);
-    versor = versorM.default; topojson = topojsonM;
-    rewind = window.geojsonRewind?.rewind;
-
-    // Projections
-    projections = [
-      { id:'mercator', name:'Mercator', p:d3.geoMercator() },
-      { id:'albersUsa', name:'Albers USA', p:d3.geoAlbersUsa() },
-      { id:'azimuthal', name:'Azimuthal Equal Area', p:d3.geoAzimuthalEqualArea() },
-      { id:'equalEarth', name:'Equal Earth', p:d3.geoEqualEarth() },
-      { id:'orthographic', name:'Orthographic', p:d3.geoOrthographic() },
-      { id:'waterman', name:'Waterman (Butterfly)', p:geoPolyhedralWaterman() },
-    ];
-
-    // Data sources (use standard /main/ raw URLs)
-    const [t110, t50, t10] = await Promise.all([
-      fetchJSON('https://raw.githubusercontent.com/Adoucett/worldmap/main/lib/assets/ne_110m_admin_0_countries_TOPOJSON_compact.json'),
-      fetchJSON('https://raw.githubusercontent.com/Adoucett/worldmap/main/lib/assets/ne_50m_admin_0_countries_TOPOJSON_compact.json'),
-      fetchJSON('https://raw.githubusercontent.com/Adoucett/worldmap/main/lib/assets/ne_10m_admin_0_countries_usa_TOPOJSON_compact.json'),
-    ]);
-    worldSources = [
-      { name:'Low Res (110m)', type:'topojson', data:t110, object:Object.keys(t110.objects)[0] },
-      { name:'Med Res (50m)',  type:'topojson', data:t50,  object:Object.keys(t50.objects)[0] },
-      { name:'High Res (10m)', type:'topojson', data:t10,  object:Object.keys(t10.objects)[0] },
-    ];
-    usSources = [
-      { name:'US States (20m)', type:'geojson', url:'https://raw.githubusercontent.com/Adoucett/worldmap/main/lib/assets/gz_2010_us_040_00_20m.json' },
-      { name:'US States (5m)',  type:'geojson', url:'https://raw.githubusercontent.com/Adoucett/worldmap/main/lib/assets/gz_2010_us_040_00_5m.json' },
-      { name:'US States (500k)',type:'geojson', url:'https://raw.githubusercontent.com/Adoucett/worldmap/main/lib/assets/gz_2010_us_040_00_500k.json' },
-    ];
-    mapDataSources = worldSources;
-    selectedDataSource = mapDataSources[1];
-    graticule = d3.geoGraticule();
-
-    // Ensure theme vars exist before UI
-    initThemeFromKey();
-
-    // Render UI, then size
-    renderUI();
-    container = document.querySelector('#map-container');
-    svg = document.querySelector('#map-svg');
-    viewW = container.clientWidth; viewH = container.clientHeight;
-
-    isReady = true;
-
-    await loadData();
-    setDefaultProjection();
-    updateProjection();
-    setupInteractions();
-    window.addEventListener('resize', onResize);
-  }
-
-  // --- DATA & MODE ---
-  async function loadData() {
-    if (!selectedDataSource) return;
-    if (selectedDataSource.type === 'topojson') {
-      const { data, object } = selectedDataSource;
-      const fc = topojson.feature(data, data.objects[object]);
-      features = fc.features;
-      borders = topojson.mesh(data, data.objects[object], (a,b)=>a!==b);
-    } else {
-      const geo = selectedDataSource.data ?? await fetchJSON(selectedDataSource.url);
-      const gj = rewind ? rewind(structuredClone(geo), true) : geo;
-      features = gj.features || [];
-      borders = null;
-      selectedDataSource.data = geo;
-    }
-    updateSelector();
-    updateProjection();
-  }
-
-  function setDefaultProjection() {
-    selectedProjectionId = (geoMode === 'us') ? 'albersUsa' : 'equalEarth';
-    const sel = document.querySelector('#projection');
-    if (sel) sel.value = selectedProjectionId; // don’t assign via setAttribute
-  }
-
-  // --- INTERACTIONS ---
-  const onResize = debounce(() => {
-    if (!container) return;
-    viewW = container.clientWidth; viewH = container.clientHeight;
-    updateProjection();
-  });
-
-  function setupInteractions() {
-    const svgSel = d3.select(svg);
-    zoomBehavior = d3.zoom().scaleExtent([1,40]).on('zoom', e => {
-      currentTransform = e.transform;
-      zoomSlider = +e.transform.k.toFixed(1);
-      const zv = document.querySelector('#zoom-value');
-      if (zv) zv.textContent = `${zoomSlider.toFixed(1)}× • ${selectedProjectionId === 'orthographic' ? 'Rotate' : 'Pan'}`;
-      const zs = document.querySelector('#zoom-slider');
-      if (zs) zs.value = zoomSlider;
-      updateMap();
-    });
-    svgSel.on('.zoom', null).call(zoomBehavior);
-
-    const dragBehavior = d3.drag().on('start', dragStart).on('drag', dragMove).on('end', () => svg.classList.remove('panning'));
-    svgSel.on('.drag', null).call(dragBehavior);
-  }
-
-  function dragStart(event) {
-    svg.classList.add('panning');
-    if (selectedProjectionId === 'orthographic') {
-      const p = projection.invert([event.x, event.y]);
-      if (!p || !isFinite(p[0])) return;
-      const q0 = versor.rotation(projection.rotate());
-      const v0 = versor.cartesian(p);
-      const r0 = projection.rotate();
-      Object.assign(panStart, { v0, q0, r0 });
-    } else {
-      Object.assign(panStart, { x: event.x, y: event.y, transform: currentTransform });
-    }
-  }
-
-  function dragMove(event) {
-    if (selectedProjectionId === 'orthographic') {
-      if (!panStart.v0) return;
-      const v1 = versor.cartesian(projection.rotate(panStart.r0).invert([event.x, event.y]));
-      if (!v1) return;
-      const q1 = versor.multiply(panStart.q0, versor.delta(panStart.v0, v1));
-      [rotation.x, rotation.y] = versor.rotation(q1);
-    } else {
-      if (panStart.x == null) return;
-      const dx = event.x - panStart.x, dy = event.y - panStart.y;
-      currentTransform.x += dx; currentTransform.y += dy;
-      panStart.x = event.x; panStart.y = event.y;
-      d3.select(svg).call(zoomBehavior.transform, d3.zoomIdentity.translate(currentTransform.x, currentTransform.y).scale(currentTransform.k));
-    }
-    updateMap();
-  }
-
-  // --- RENDERING ---
-  function updateProjection() {
-    if (!viewW || !viewH || !features.length || !isReady) return;
-    const selDef = projections.find(p => p.id === selectedProjectionId);
-    if (!selDef) return;
-
-    const base = selDef.p.copy?.() ?? selDef.p;
-    const geoJsonForFit = { type:'FeatureCollection', features };
-    projection = base.fitSize([viewW, viewH], geoJsonForFit);
-    if (selectedProjectionId === 'orthographic') projection.rotate([rotation.x, rotation.y, rotation.z]);
-    else if (geoMode === 'world') projection.center([centerLon, centerLat]);
-
-    path = d3.geoPath().projection(projection);
-    updateMap();
-  }
-
-  function updateColors() {
-    const theme = basemapModes[basemapKey] || {};
-    oceanFill = (basemapKey === 'custom') ? customOceanFill : theme.ocean;
-    landFill  = (basemapKey === 'custom') ? customLandFill  : theme.land;
-    landStroke = (basemapKey === 'custom') ? customLandStroke : theme.stroke;
-    graticuleStroke = (basemapKey === 'custom') ? customGraticuleStroke : theme.grid;
-    labelFill = (basemapKey === 'custom') ? customLabelFill : theme.label;
-    highlightFill = (basemapKey === 'custom') ? customHighlightFill : theme.highlight;
-    updateMap();
-  }
-
-  function updateMap() {
-    if (!svg || !path || !isReady) return;
-    const svgSel = d3.select(svg).style('background-color', oceanFill);
-    let g = svgSel.select('g.map-content');
-    if (g.empty()) g = svgSel.append('g').attr('class', 'map-content');
-    g.attr('transform', currentTransform.toString());
-
-    let sphere = g.select('.sphere');
-    if (sphere.empty()) sphere = g.insert('path', ':first-child').attr('class', 'sphere');
-    sphere.attr('d', path({ type:'Sphere' })).attr('fill', oceanFill);
-
-    let graticulePath = g.select('.graticule');
-    if (graticulePath.empty()) graticulePath = g.append('path').attr('class', 'graticule');
-    graticulePath.attr('d', path(graticule())).attr('fill','none').attr('stroke', graticuleStroke).attr('stroke-width', graticuleStrokeWidth / currentTransform.k);
-
-    g.selectAll('.feature')
-      .data(features, d => getName(d))
-      .join(
-        enter => enter.append('path').attr('class','feature').on('click', (e,d)=>toggleName(getName(d))),
-        update => update,
-        exit => exit.remove()
-      )
-      .attr('d', path)
-      .attr('fill', d => selectedNames.includes(getName(d)) ? highlightFill : landFill)
-      .attr('stroke', landStroke)
-      .attr('stroke-width', landStrokeWidth / currentTransform.k);
-
-    let bordersPath = g.select('.borders');
-    if (geoMode === 'world' && borders) {
-      if (bordersPath.empty()) bordersPath = g.append('path').attr('class','borders');
-      bordersPath.attr('d', path(borders)).attr('fill','none').attr('stroke', landStroke).attr('stroke-width', landStrokeWidth / currentTransform.k).style('pointer-events','none');
-    } else if (!bordersPath.empty()) {
-      bordersPath.remove();
-    }
-
-    let labelGroup = g.select('.labels');
-    if (showLabels && selectedNames.length) {
-      if (labelGroup.empty()) labelGroup = g.append('g').attr('class','labels').style('pointer-events','none');
-      const visible = features.filter(c => selectedNames.includes(getName(c)));
-      labelGroup.selectAll('text')
-        .data(visible, d => getName(d))
-        .join('text')
-        .attr('x', d => path.centroid(d)[0])
-        .attr('y', d => path.centroid(d)[1])
-        .attr('text-anchor','middle').attr('dy','0.35em')
-        .attr('fill', labelFill).attr('stroke', labelStrokeColor)
-        .attr('stroke-width', labelStrokeWidth / currentTransform.k)
-        .style('font-size', `${labelFontSize / currentTransform.k}px`)
-        .text(d => getName(d))
-        .style('opacity', d => {
-          const [cx, cy] = path.centroid(d);
-          return isFinite(cx) && isFinite(cy) ? 1 : 0;
-        });
-    } else if (!labelGroup.empty()) {
-      labelGroup.remove();
-    }
-  }
-
-  // --- UI & EVENTS ---
-  function renderUI() {
-    const app = document.querySelector('#app');
-    app.className = '';
-    app.innerHTML = `
-      <div class="grid">
-        <aside class="controls">
-          <h3>Geography</h3>
-          <label>Mode
-            <select id="geography">
-              ${Object.entries(geographyModes).map(([k,v])=>`<option value="${k}" ${k===geoMode?'selected':''}>${v}</option>`).join('')}
-            </select>
-          </label>
-
-          <h3>Dimensions</h3>
-          <label>Preset
-            <select id="preset">
-              ${dimensionPresets.map(p=>`<option value="${p.name}" ${p.name===selectedPreset.name?'selected':''}>${p.name}</option>`).join('')}
-            </select>
-          </label>
-          <div id="custom-dimensions" style="display:${selectedPreset.name==='Custom'?'flex':'none'}; flex-direction:column; gap:.5rem;">
-            <label>Width <input type="number" id="output-width" value="${outputWidth}" min="100"></label>
-            <label>Height <input type="number" id="output-height" value="${outputHeight}" min="100"></label>
-          </div>
-
-          <h3>Basemap</h3>
-          <label>Theme
-            <select id="basemap">
-              ${Object.entries(basemapModes).map(([k,m])=>`<option value="${k}" ${k===basemapKey?'selected':''}>${m.name}</option>`).join('')}
-            </select>
-          </label>
-          <div id="custom-colors" style="display:${basemapKey==='custom'?'flex':'none'}; flex-direction:column; gap:.5rem;">
-            <label>Ocean <input type="color" id="custom-ocean" value="${customOceanFill}"></label>
-            <label>Land <input type="color" id="custom-land" value="${customLandFill}"></label>
-            <label>Stroke <input type="color" id="custom-stroke" value="${customLandStroke}"></label>
-            <label>Grid <input type="color" id="custom-grid" value="${customGraticuleStroke}"></label>
-            <label>Label <input type="color" id="custom-label" value="${customLabelFill}"></label>
-            <label>Highlight <input type="color" id="custom-highlight" value="${customHighlightFill}"></label>
-          </div>
-
-          <h3>Resolution</h3>
-          <label>Data
-            <select id="resolution">
-              ${mapDataSources.map(ms=>`<option value="${ms.name}" ${ms.name===selectedDataSource.name?'selected':''}>${ms.name}</option>`).join('')}
-            </select>
-          </label>
-
-          <div id="projection-controls" style="display:${geoMode==='us'?'none':'block'};">
-            <h3>Projection</h3>
-            <label>Type
-              <select id="projection">
-                ${projections.map(p=>`<option value="${p.id}" ${p.id===selectedProjectionId?'selected':''}>${p.name}</option>`).join('')}
-              </select>
-            </label>
-          </div>
-
-          <h3>Zoom & Pan</h3>
-          <label>Zoom <input type="range" id="zoom-slider" min="1" max="40" step="0.1" value="${zoomSlider}"><small id="zoom-value">${zoomSlider.toFixed(1)}×</small></label>
-
-          <div id="center-controls" style="display:${geoMode==='us'?'none':'block'};">
-            <h3>Center</h3>
-            <label>Longitude <input type="range" id="center-lon" min="-180" max="180" step="1" value="${centerLon}"><span>${centerLon.toFixed(0)}°</span></label>
-            <label>Latitude  <input type="range" id="center-lat" min="-90"  max="90"  step="1" value="${centerLat}"><span>${centerLat.toFixed(0)}°</span></label>
-          </div>
-
-          <h3>Labels</h3>
-          <label><input type="checkbox" id="show-labels" ${showLabels?'checked':''}>Show ${geoMode==='us'?'state':'country'} labels</label>
-          <div id="label-options" style="display:${showLabels?'flex':'none'}; flex-direction:column; gap:.5rem;">
-            <label>Font size <input type="number" id="label-font-size" min="6" max="36" value="${labelFontSize}"></label>
-            <label>Fill <input type="color" id="label-fill" value="${labelFill}"></label>
-            <label>Stroke <input type="color" id="label-stroke" value="${labelStrokeColor}"></label>
-            <label>Stroke W <input type="range" id="label-stroke-width" min="0" max="3" step="0.25" value="${labelStrokeWidth}"><span>${labelStrokeWidth}</span></label>
-          </div>
-
-          <button id="reset-view">Reset View</button>
-
-          <h3>Download</h3>
-          <button id="download-svg">SVG</button>
-          <button id="download-png">PNG</button>
-        </aside>
-
-        <main id="map-container" class="mapwrap"><svg id="map-svg"></svg></main>
-
-        <aside class="selector">
-          <div class="multi-selector">
-            <div class="search-row">
-              <input type="text" id="feature-search" placeholder="Search ${geoMode==='us'?'states':'countries'}..." aria-label="Filter list">
-              <button id="reset-features" ${selectedNames.length ? '' : 'disabled'}>Reset</button>
-            </div>
-            <div class="list" role="listbox" aria-multiselectable="true" id="feature-list"></div>
-            <div class="selected-display"><strong>Selected:</strong><div class="pills" id="selected-features"></div></div>
-          </div>
-        </aside>
+<div class="grid">
+  <aside>
+    <div class="scroll-y">
+      <div>
+        <h3>Geography</h3>
+        <label>Mode
+          <select id="geo-mode">
+            <option value="world">World Countries</option>
+            <option value="us">US States</option>
+          </select>
+        </label>
       </div>
-    `;
-    addEventListeners();
-    updateColors();
-  }
 
-  function addEventListeners() {
-    document.querySelector('#geography')?.addEventListener('change', async e => {
-      geoMode = e.target.value;
-      mapDataSources = geoMode === 'us' ? usSources : worldSources;
-      selectedDataSource = mapDataSources[1];
-      selectedNames = []; searchTerm = '';
-      renderUI();
-      container = document.querySelector('#map-container'); svg = document.querySelector('#map-svg');
-      viewW = container.clientWidth; viewH = container.clientHeight;
-      setupInteractions(); await loadData(); setDefaultProjection(); resetView();
-    });
+      <div id="proj-group">
+        <h3>Projection</h3>
+        <label>Type
+          <select id="proj-select"></select>
+        </label>
+        <div style="margin-top:0.5rem; font-size:0.8rem; color:#666; font-style:italic;">
+          <span id="proj-desc">Drag to rotate globe. Scroll to zoom.</span>
+        </div>
+      </div>
 
-    document.querySelector('#preset')?.addEventListener('change', e => {
-      selectedPreset = dimensionPresets.find(p => p.name === e.target.value);
-      outputWidth = selectedPreset.w; outputHeight = selectedPreset.h;
-      const cd = document.querySelector('#custom-dimensions');
-      if (cd) cd.style.display = selectedPreset.name === 'Custom' ? 'flex' : 'none';
-      if (selectedPreset.name === 'Custom') {
-        const w = document.querySelector('#output-width'); const h = document.querySelector('#output-height');
-        if (w) w.value = outputWidth; if (h) h.value = outputHeight;
-      }
-    });
-    document.querySelector('#output-width')?.addEventListener('change', e => outputWidth = +e.target.value);
-    document.querySelector('#output-height')?.addEventListener('change', e => outputHeight = +e.target.value);
+      <div>
+        <h3>Style</h3>
+        <label>Theme
+          <select id="theme-select">
+            <option value="planet">Planet Labs</option>
+            <option value="light">Light Minimal</option>
+            <option value="dark">Dark Cinematic</option>
+            <option value="custom">Custom...</option>
+          </select>
+        </label>
+        <div id="custom-colors" class="color-grid" style="display:none; margin-top:0.5rem;">
+          <label>Ocean <input type="color" id="c-ocean"></label>
+          <label>Land <input type="color" id="c-land"></label>
+          <label>Borders <input type="color" id="c-stroke"></label>
+          <label>Highlight <input type="color" id="c-high"></label>
+          <label>Grid <input type="color" id="c-grid"></label>
+          <label>Labels <input type="color" id="c-text"></label>
+        </div>
+      </div>
 
-    document.querySelector('#basemap')?.addEventListener('change', e => {
-      basemapKey = e.target.value;
-      const cc = document.querySelector('#custom-colors');
-      if (cc) cc.style.display = basemapKey === 'custom' ? 'flex' : 'none';
-      updateColors();
-    });
-    document.querySelector('#custom-ocean')?.addEventListener('input', e => { customOceanFill = e.target.value; updateColors(); });
-    document.querySelector('#custom-land')?.addEventListener('input', e => { customLandFill = e.target.value; updateColors(); });
-    document.querySelector('#custom-stroke')?.addEventListener('input', e => { customLandStroke = e.target.value; updateColors(); });
-    document.querySelector('#custom-grid')?.addEventListener('input', e => { customGraticuleStroke = e.target.value; updateColors(); });
-    document.querySelector('#custom-label')?.addEventListener('input', e => { customLabelFill = e.target.value; updateColors(); });
-    document.querySelector('#custom-highlight')?.addEventListener('input', e => { customHighlightFill = e.target.value; updateColors(); });
+      <div>
+        <h3>View</h3>
+        <label>Zoom
+          <div class="range-row">
+            <input type="range" id="zoom-range" min="1" max="40" step="0.1" value="1">
+            <span class="val-display" id="zoom-val">1.0</span>
+          </div>
+        </label>
+        <button class="secondary" id="reset-view" style="margin-top:0.5rem;">Reset View</button>
+      </div>
 
-    document.querySelector('#resolution')?.addEventListener('change', async e => {
-      selectedDataSource = mapDataSources.find(ms => ms.name === e.target.value);
-      await loadData();
-    });
-    document.querySelector('#projection')?.addEventListener('change', e => { selectedProjectionId = e.target.value; resetView(); });
+      <div>
+        <h3>Labels</h3>
+        <label class="range-row" style="margin-bottom:0.5rem;">
+          <input type="checkbox" id="show-labels" checked style="width:auto; margin:0;"> Show Labels
+        </label>
+        <div id="label-opts">
+          <label>Size
+            <div class="range-row">
+              <input type="range" id="label-size" min="6" max="32" value="10">
+              <span class="val-display" id="label-size-val">10</span>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+  </aside>
 
-    document.querySelector('#zoom-slider')?.addEventListener('input', e => {
-      zoomSlider = +e.target.value; d3.select(svg).call(zoomBehavior.scaleTo, zoomSlider);
-    });
+  <main>
+    <div id="loader" class="loader active">Loading Resources...</div>
+    <svg id="map-svg"></svg>
+  </main>
 
-    document.querySelector('#center-lon')?.addEventListener('input', e => {
-      centerLon = +e.target.value;
-      const s = e.target.nextElementSibling; if (s) s.textContent = `${centerLon.toFixed(0)}°`;
-      updateProjection();
-    });
-    document.querySelector('#center-lat')?.addEventListener('input', e => {
-      centerLat = +e.target.value;
-      const s = e.target.nextElementSibling; if (s) s.textContent = `${centerLat.toFixed(0)}°`;
-      updateProjection();
-    });
+  <aside class="right">
+    <div class="scroll-y">
+      <div>
+        <h3>Selection</h3>
+        <div class="search-box">
+          <input type="text" id="search" placeholder="Search...">
+          <button id="clear-sel" class="secondary" style="width:auto;">Clear</button>
+        </div>
+        <div class="list" id="feature-list"></div>
+        <div class="tags" id="sel-tags"></div>
+      </div>
 
-    document.querySelector('#show-labels')?.addEventListener('change', e => {
-      showLabels = e.target.checked;
-      const lo = document.querySelector('#label-options');
-      if (lo) lo.style.display = showLabels ? 'flex' : 'none';
-      updateMap();
-    });
-    document.querySelector('#label-font-size')?.addEventListener('change', e => { labelFontSize = +e.target.value; updateMap(); });
-    document.querySelector('#label-fill')?.addEventListener('input', e => { const cl = document.querySelector('#custom-label'); if (cl) cl.value = e.target.value; customLabelFill = e.target.value; updateColors(); });
-    document.querySelector('#label-stroke')?.addEventListener('input', e => { labelStrokeColor = e.target.value; updateMap(); });
-    document.querySelector('#label-stroke-width')?.addEventListener('input', e => { labelStrokeWidth = +e.target.value; const s = e.target.nextElementSibling; if (s) s.textContent = labelStrokeWidth; updateMap(); });
+      <div style="margin-top:auto;">
+        <h3>Export</h3>
+        <label>Resolution
+          <select id="export-res">
+            <option value="web">Web (1200 × 630)</option>
+            <option value="hd" selected>HD (1920 × 1080)</option>
+            <option value="4k">4K (3840 × 2160)</option>
+          </select>
+        </label>
+        <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+          <button id="dl-svg">Download SVG</button>
+          <button id="dl-png">Download PNG</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
 
-    document.querySelector('#reset-view')?.addEventListener('click', resetView);
-    document.querySelector('#download-svg')?.addEventListener('click', () => download('svg'));
-    document.querySelector('#download-png')?.addEventListener('click', () => download('png'));
+<script type="module">
+import * as d3 from 'https://cdn.jsdelivr.net/npm/d3@7/+esm';
+import * as topojson from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
+import versor from 'https://cdn.jsdelivr.net/npm/versor@0/+esm';
+import { geoPolyhedralWaterman } from 'https://cdn.jsdelivr.net/npm/d3-geo-projection@4/+esm';
 
-    document.querySelector('#feature-search')?.addEventListener('input', e => { searchTerm = e.target.value; updateSelector(); });
-    document.querySelector('#reset-features')?.addEventListener('click', () => { selectedNames = []; updateSelector(); updateMap(); });
-  }
+// --- State ---
+const state = {
+  mode: 'world', // world | us
+  features: [],
+  borders: null,
+  selected: new Set(),
+  projId: 'equalEarth',
+  theme: 'planet',
+  colors: {},
+  transform: { k: 1, x: 0, y: 0 }, // For 2D
+  rotation: [0, 0, 0], // For 3D [lambda, phi, gamma]
+  width: 0,
+  height: 0,
+  zoom: 1,
+  showLabels: true,
+  labelSize: 10
+};
 
-  function updateSelector() {
-    const names = features.map(getName).filter(Boolean).sort((a,b)=>a.localeCompare(b));
-    const filtered = searchTerm ? names.filter(n => n.toLowerCase().includes(searchTerm.toLowerCase())) : names;
-    const listEl = document.querySelector('#feature-list');
-    listEl.innerHTML = filtered.length
-      ? filtered.map(name => `<div class="${selectedNames.includes(name)?'selected':''}" role="option" aria-selected="${selectedNames.includes(name)}" tabindex="0">${name}</div>`).join('')
-      : `<div class="empty">No matches found</div>`;
-    const pills = document.querySelector('#selected-features');
-    pills.innerHTML = selectedNames.length ? selectedNames.map(nm => `<span class="pill">${nm} <button aria-label="Remove ${nm}">×</button></span>`).join('') : '<em>None</em>';
-    const resetBtn = document.querySelector('#reset-features');
-    if (resetBtn) resetBtn.disabled = !selectedNames.length;
+// --- Config ---
+const THEMES = {
+  planet: { ocean:'#d2d2d2', land:'#ffffff', stroke:'#999999', high:'#009DA5', grid:'#e0e0e0', text:'#333333' },
+  light:  { ocean:'#f0f4f8', land:'#ffffff', stroke:'#d1d5db', high:'#3b82f6', grid:'#e2e8f0', text:'#1e293b' },
+  dark:   { ocean:'#111827', land:'#1f2937', stroke:'#374151', high:'#f59e0b', grid:'#374151', text:'#f3f4f6' },
+  custom: { ocean:'#d2d2d2', land:'#ffffff', stroke:'#999999', high:'#009DA5', grid:'#e0e0e0', text:'#333333' }
+};
 
-    listEl.querySelectorAll('div:not(.empty)').forEach(div => div.addEventListener('click', () => toggleName(div.textContent.trim())));
-    document.querySelectorAll('#selected-features .pill button').forEach(btn => btn.addEventListener('click', () => {
-      const name = btn.parentElement.textContent.trim().slice(0,-1).trim();
-      toggleName(name);
-    }));
-  }
+const PROJECTIONS = {
+  equalEarth: { name: 'Equal Earth', type: '2d', fn: d3.geoEqualEarth },
+  mercator:   { name: 'Mercator', type: '2d', fn: d3.geoMercator },
+  ortho:      { name: 'Globe (Orthographic)', type: '3d', fn: d3.geoOrthographic },
+  waterman:   { name: 'Waterman Butterfly', type: '2d', fn: geoPolyhedralWaterman },
+  albersUsa:  { name: 'Albers USA', type: 'fixed', fn: d3.geoAlbersUsa }
+};
 
-  function toggleName(name) {
-    const i = selectedNames.indexOf(name);
-    if (i > -1) selectedNames.splice(i,1); else selectedNames.push(name);
-    updateSelector(); updateMap();
-  }
+// --- Globals ---
+let svg, gMap, pathSphere, pathGrid, gFeats, pathBorders, gLabels;
+let projection, pathGen;
+let zoomBehavior, dragBehavior; // Interaction handlers
 
-  function resetView() {
-    rotation.x = rotation.y = rotation.z = 0;
-    centerLon = 0; centerLat = 0;
-    document.querySelectorAll('#center-lon, #center-lat').forEach(el => el.value = 0);
-    const lonSpan = document.querySelector('#center-lon + span'); if (lonSpan) lonSpan.textContent = '0°';
-    const latSpan = document.querySelector('#center-lat + span'); if (latSpan) latSpan.textContent = '0°';
-    d3.select(svg).transition().duration(400).call(zoomBehavior.transform, d3.zoomIdentity);
+// --- Init ---
+async function init() {
+  svg = d3.select('#map-svg');
+  gMap = svg.append('g');
+  pathSphere = gMap.append('path').attr('class', 'sphere');
+  pathGrid = gMap.append('path').attr('class', 'grid').attr('fill', 'none');
+  gFeats = gMap.append('g');
+  pathBorders = gMap.append('path').attr('class', 'borders').attr('fill', 'none');
+  gLabels = gMap.append('g').style('pointer-events', 'none');
+
+  setupUI();
+  updateTheme();
+  
+  // Resize listener
+  const resize = () => {
+    const r = document.querySelector('main').getBoundingClientRect();
+    state.width = r.width;
+    state.height = r.height;
     updateProjection();
-  }
+  };
+  window.addEventListener('resize', resize);
+  resize();
 
-  function download(type='svg') {
-    if (!d3) return;
+  await loadData();
+  setLoading(false);
+}
 
-    const selProjDef = projections.find(p => p.id === selectedProjectionId);
-    const base = selProjDef.p.copy?.() ?? selProjDef.p;
-    const dlProj = base.fitSize([outputWidth, outputHeight], { type:'FeatureCollection', features });
-    if (selectedProjectionId === 'orthographic') dlProj.rotate([rotation.x, rotation.y]);
-    else if (geoMode === 'world') dlProj.center([centerLon, centerLat]);
-    const dlPath = d3.geoPath().projection(dlProj);
-    const t = d3.zoomTransform(svg);
+// --- Data ---
+async function loadData() {
+  setLoading(true);
+  try {
+    state.features = [];
+    state.borders = null;
 
-    const root = d3.create('svg')
-      .attr('xmlns','http://www.w3.org/2000/svg')
-      .attr('width', outputWidth).attr('height', outputHeight)
-      .attr('viewBox', `0 0 ${outputWidth} ${outputHeight}`);
-    root.append('rect').attr('width', outputWidth).attr('height', outputHeight).attr('fill', oceanFill);
-    const g = root.append('g').attr('id','map-content').attr('transform', t.toString());
-
-    g.append('path').attr('d', dlPath({ type:'Sphere' })).attr('fill', oceanFill);
-    g.append('path').attr('d', dlPath(graticule())).attr('fill','none').attr('stroke', graticuleStroke).attr('stroke-width', graticuleStrokeWidth / t.k);
-
-    g.selectAll('path.feature').data(features).enter().append('path')
-      .attr('class','feature').attr('d', dlPath)
-      .attr('fill', d => selectedNames.includes(getName(d)) ? highlightFill : landFill)
-      .attr('stroke', landStroke).attr('stroke-width', landStrokeWidth / t.k);
-
-    if (geoMode === 'world' && borders) {
-      g.append('path').attr('id','borders').attr('d', dlPath(borders))
-        .attr('fill','none').attr('stroke', landStroke).attr('stroke-width', landStrokeWidth / t.k);
+    if (state.mode === 'world') {
+      // Load relative path
+      const topo = await d3.json('./lib/assets/ne_50m_admin_0_countries_TOPOJSON_compact.json');
+      state.features = topojson.feature(topo, topo.objects.ne_50m_admin_0_countries).features;
+      // Filter out Antarctica for cleaner look? Optional.
+      // state.features = state.features.filter(d => d.properties.NAME !== "Antarctica");
+      state.borders = topojson.mesh(topo, topo.objects.ne_50m_admin_0_countries, (a, b) => a !== b);
+    } else {
+      const geo = await d3.json('./lib/assets/gz_2010_us_040_00_20m.json');
+      state.features = geo.features;
+      // No mesh for GeoJSON unless we calculate it, simple path stroke is enough for US states
     }
-
-    if (showLabels && selectedNames.length) {
-      const lblG = g.append('g').attr('id','labels').attr('font-family','sans-serif').attr('paint-order','stroke fill');
-      features.filter(c => selectedNames.includes(getName(c))).forEach(c => {
-        const [cx, cy] = dlPath.centroid(c);
-        if (isFinite(cx)) lblG.append('text')
-          .attr('x', cx).attr('y', cy).attr('text-anchor','middle').attr('dy','0.35em')
-          .attr('font-size', `${labelFontSize / t.k}px`)
-          .attr('fill', labelFill).attr('stroke', labelStrokeColor).attr('stroke-width', labelStrokeWidth / t.k)
-          .text(getName(c));
-      });
-    }
-
-    const svgString = new XMLSerializer().serializeToString(root.node());
-    const blob = new Blob([svgString], { type:'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const baseFilename = geoMode === 'us' ? 'us-states-map' : 'world-map';
-
-    if (type === 'svg') {
-      a.href = url; a.download = `${baseFilename}.svg`; a.click(); URL.revokeObjectURL(url); return;
-    }
-
-    if (type === 'png') {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = outputWidth; canvas.height = outputHeight;
-        canvas.getContext('2d').drawImage(img, 0, 0, outputWidth, outputHeight);
-        a.href = canvas.toDataURL('image/png');
-        a.download = `${baseFilename}.png`;
-        a.click();
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
-    }
-  }
-
-  // --- BOOT ---
-  init().catch(err => {
-    document.querySelector('#app').textContent = `Fatal Error: ${err.message}`;
+    
+    // Sort for list
+    state.features.sort((a,b) => getName(a).localeCompare(getName(b)));
+    
+    updateList();
+    updateProjection();
+  } catch (err) {
     console.error(err);
+    alert("Error loading data. Ensure the ./lib/assets folder is present.");
+  } finally {
+    setLoading(false);
+  }
+}
+
+function getName(d) { return d.properties.NAME || d.properties.name || 'Unknown'; }
+
+// --- Projection & Rendering ---
+function updateProjection() {
+  const def = PROJECTIONS[state.projId];
+  if (!def) return;
+
+  // Reset SVG Transform (important when switching 2D <-> 3D)
+  if (def.type === '3d') {
+    gMap.attr('transform', null);
+  } else {
+    gMap.attr('transform', `translate(${state.transform.x},${state.transform.y}) scale(${state.transform.k})`);
+  }
+
+  // Create Projection
+  projection = def.fn();
+  
+  if (state.mode === 'us' && state.projId === 'albersUsa') {
+    projection.fitSize([state.width, state.height], { type: 'FeatureCollection', features: state.features });
+  } else if (def.type === '3d') {
+    // Globe logic: Scale controls size directly, Rotate controls view
+    const fitRatio = Math.min(state.width, state.height) / 2.2; 
+    projection.translate([state.width/2, state.height/2]);
+    projection.scale(fitRatio * state.zoom);
+    projection.rotate(state.rotation);
+    projection.clipAngle(90); // Cut back of globe
+  } else {
+    // 2D logic: Fit to screen, Zoom controls SVG transform
+    projection.fitSize([state.width, state.height], { type: 'Sphere' });
+  }
+
+  pathGen = d3.geoPath(projection);
+  
+  updateInteractions(def.type);
+  render();
+}
+
+function render() {
+  if (!pathGen) return;
+
+  const colors = state.colors;
+  const is3D = PROJECTIONS[state.projId].type === '3d';
+  
+  // 1. Background / Sphere
+  svg.style('background', is3D ? colors.ocean : '#e0e0e0');
+  
+  if (is3D) {
+    pathSphere.attr('d', pathGen({type:'Sphere'})).attr('fill', colors.ocean).attr('stroke', 'none');
+  } else {
+    // In 2D, the ocean is the background, sphere is transparent or hidden
+    pathSphere.attr('d', pathGen({type:'Sphere'})).attr('fill', colors.ocean); 
+  }
+
+  // 2. Graticule
+  pathGrid.attr('d', pathGen(d3.geoGraticule10())).attr('stroke', colors.grid).attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
+
+  // 3. Features
+  gFeats.selectAll('path')
+    .data(state.features, d => getName(d))
+    .join('path')
+    .attr('d', pathGen)
+    .attr('fill', d => state.selected.has(getName(d)) ? colors.high : colors.land)
+    .attr('stroke', colors.stroke)
+    .attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k)) // Keep thin lines
+    .on('click', (e, d) => toggleSelect(getName(d)));
+
+  // 4. Borders (Mesh)
+  if (state.borders) {
+    pathBorders.attr('d', pathGen(state.borders))
+      .attr('stroke', colors.stroke)
+      .attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
+  } else {
+    pathBorders.attr('d', null);
+  }
+
+  // 5. Labels
+  if (state.showLabels) {
+    const visible = state.features.filter(d => state.selected.has(getName(d)));
+    gLabels.selectAll('text')
+      .data(visible, d => getName(d))
+      .join('text')
+      .attr('transform', d => {
+        const c = pathGen.centroid(d);
+        // Hide labels on backside of globe
+        return (is3D && !d3.geoContains(d, projection.invert(c))) ? 'translate(-9999,-9999)' : `translate(${c[0]},${c[1]})`;
+      })
+      .attr('text-anchor', 'middle')
+      .attr('dy', '0.35em')
+      .text(getName(d))
+      .attr('fill', colors.text)
+      .attr('font-size', state.labelSize / (is3D ? 1 : state.transform.k))
+      .style('text-shadow', '0px 0px 3px rgba(255,255,255,0.8)');
+  } else {
+    gLabels.selectAll('text').remove();
+  }
+}
+
+// --- Interactions ---
+function updateInteractions(type) {
+  // Clear old listeners
+  svg.on('.zoom', null).on('.drag', null);
+
+  if (type === '3d') {
+    // -- GLOBE MODE --
+    // 1. Zoom handles Scale only (no panning)
+    zoomBehavior = d3.zoom()
+      .scaleExtent([0.5, 10])
+      .on('zoom', e => {
+        state.zoom = e.transform.k;
+        document.getElementById('zoom-range').value = state.zoom;
+        document.getElementById('zoom-val').textContent = state.zoom.toFixed(1);
+        updateProjection(); 
+      });
+    
+    // Hack: Initialize zoom identity to current scale to prevent jumping
+    svg.call(zoomBehavior).on("mousedown.zoom", null); // Disable default zoom drag (pan)
+    svg.call(zoomBehavior.transform, d3.zoomIdentity.scale(state.zoom));
+
+    // 2. Drag handles Rotation (Versor)
+    dragBehavior = d3.drag()
+      .on('start', dragStart)
+      .on('drag', dragMove);
+    
+    svg.call(dragBehavior);
+
+  } else {
+    // -- 2D MODE --
+    // Standard D3 Zoom/Pan
+    zoomBehavior = d3.zoom()
+      .scaleExtent([1, 40])
+      .on('zoom', e => {
+        state.transform = e.transform;
+        // Sync slider for 2D zoom is tricky, usually we just update visual
+        state.zoom = e.transform.k; 
+        document.getElementById('zoom-range').value = state.zoom;
+        document.getElementById('zoom-val').textContent = state.zoom.toFixed(1);
+        render(); // Just re-render (apply transform), don't re-project
+        gMap.attr('transform', e.transform);
+      });
+      
+    svg.call(zoomBehavior);
+    svg.call(zoomBehavior.transform, d3.zoomIdentity.translate(state.transform.x, state.transform.y).scale(state.transform.k));
+  }
+}
+
+// Versor Drag Logic
+let v0, q0, r0;
+function dragStart(event) {
+  const p = d3.pointer(event, this);
+  v0 = versor.cartesian(projection.invert(p));
+  r0 = projection.rotate();
+  q0 = versor.rotation(r0);
+  svg.style('cursor', 'grabbing');
+}
+function dragMove(event) {
+  const p = d3.pointer(event, this);
+  const v1 = versor.cartesian(projection.rotate(r0).invert(p));
+  if (!v1) return;
+  const q1 = versor.multiply(q0, versor.delta(v0, v1));
+  state.rotation = versor.rotation(q1);
+  updateProjection();
+}
+svg.on('mouseup', () => svg.style('cursor', 'grab'));
+
+// --- UI Logic ---
+function setupUI() {
+  // Projections
+  const projSel = document.getElementById('proj-select');
+  const updateProjs = () => {
+    projSel.innerHTML = Object.entries(PROJECTIONS)
+      .filter(([k,v]) => {
+        if(state.mode === 'us') return k === 'albersUsa'; // Only Albers for US
+        return k !== 'albersUsa'; // Others for World
+      })
+      .map(([k,v]) => `<option value="${k}">${v.name}</option>`).join('');
+    
+    // Default select
+    if(state.mode === 'us') state.projId = 'albersUsa';
+    else if(state.projId === 'albersUsa') state.projId = 'equalEarth'; // Fallback
+    projSel.value = state.projId;
+  };
+  updateProjs();
+
+  // Listeners
+  document.getElementById('geo-mode').addEventListener('change', e => {
+    state.mode = e.target.value;
+    state.selected.clear();
+    state.rotation = [0,0,0]; // Reset rotation
+    state.transform = {k:1, x:0, y:0}; // Reset pan
+    updateProjs();
+    loadData();
   });
-  </script>
+
+  document.getElementById('proj-select').addEventListener('change', e => {
+    state.projId = e.target.value;
+    const is3d = PROJECTIONS[state.projId].type === '3d';
+    document.getElementById('proj-desc').textContent = is3d ? "Drag to rotate. Scroll to zoom." : "Drag to pan. Scroll to zoom.";
+    updateProjection();
+  });
+
+  document.getElementById('zoom-range').addEventListener('input', e => {
+    const k = +e.target.value;
+    state.zoom = k;
+    document.getElementById('zoom-val').textContent = k.toFixed(1);
+    
+    if (PROJECTIONS[state.projId].type === '3d') {
+      updateProjection();
+    } else {
+      svg.call(zoomBehavior.scaleTo, k);
+    }
+  });
+
+  document.getElementById('reset-view').addEventListener('click', () => {
+    state.rotation = [0,0,0];
+    state.zoom = 1;
+    state.transform = {k:1,x:0,y:0};
+    document.getElementById('zoom-range').value = 1;
+    updateProjection();
+  });
+
+  document.getElementById('theme-select').addEventListener('change', e => {
+    state.theme = e.target.value;
+    const isCustom = state.theme === 'custom';
+    document.getElementById('custom-colors').style.display = isCustom ? 'grid' : 'none';
+    if(!isCustom) updateTheme();
+    render();
+  });
+
+  // Color inputs
+  ['ocean','land','stroke','high','grid','text'].forEach(k => {
+    document.getElementById(`c-${k}`).addEventListener('input', e => {
+      document.getElementById('theme-select').value = 'custom';
+      state.theme = 'custom';
+      state.colors[k] = e.target.value;
+      render();
+    });
+  });
+
+  // Search
+  document.getElementById('search').addEventListener('input', e => updateList(e.target.value));
+  document.getElementById('clear-sel').addEventListener('click', () => { state.selected.clear(); updateList(); render(); });
+  
+  // Labels
+  document.getElementById('show-labels').addEventListener('change', e => { state.showLabels = e.target.checked; render(); });
+  document.getElementById('label-size').addEventListener('input', e => { 
+    state.labelSize = +e.target.value; 
+    document.getElementById('label-size-val').textContent = state.labelSize;
+    render(); 
+  });
+  
+  // Export
+  document.getElementById('dl-svg').addEventListener('click', () => exportMap('svg'));
+  document.getElementById('dl-png').addEventListener('click', () => exportMap('png'));
+}
+
+function updateTheme() {
+  state.colors = { ...THEMES[state.theme] };
+  // Sync inputs
+  Object.keys(state.colors).forEach(k => {
+    const el = document.getElementById(`c-${k}`);
+    if(el) el.value = state.colors[k];
+  });
+}
+
+function updateList(filter = '') {
+  const list = document.getElementById('feature-list');
+  const items = state.features.filter(d => getName(d).toLowerCase().includes(filter.toLowerCase()));
+  
+  list.innerHTML = items.map(d => {
+    const name = getName(d);
+    return `<div class="list-item ${state.selected.has(name) ? 'selected' : ''}" data-name="${name}">${name}</div>`;
+  }).join('');
+  
+  // Tags
+  const tags = document.getElementById('sel-tags');
+  tags.innerHTML = Array.from(state.selected).map(name => 
+    `<div class="tag">${name} <span data-name="${name}">×</span></div>`
+  ).join('');
+  
+  // Events
+  list.querySelectorAll('.list-item').forEach(el => el.addEventListener('click', () => toggleSelect(el.dataset.name)));
+  tags.querySelectorAll('span').forEach(el => el.addEventListener('click', () => toggleSelect(el.dataset.name)));
+}
+
+function toggleSelect(name) {
+  if (state.selected.has(name)) state.selected.delete(name);
+  else state.selected.add(name);
+  updateList(document.getElementById('search').value);
+  render();
+}
+
+function setLoading(active) {
+  const l = document.getElementById('loader');
+  if(active) l.classList.add('active');
+  else l.classList.remove('active');
+}
+
+// --- Export ---
+function exportMap(type) {
+  // 1. Get dimensions
+  const res = document.getElementById('export-res').value;
+  const dims = { web:[1200,630], hd:[1920,1080], '4k':[3840,2160] }[res];
+  const w = dims[0], h = dims[1];
+
+  // 2. Create offscreen context
+  const exSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  exSvg.setAttribute("width", w);
+  exSvg.setAttribute("height", h);
+  exSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  
+  // 3. New Projection instance for export size
+  let exProj = PROJECTIONS[state.projId].fn();
+  if (state.mode === 'us') {
+    exProj.fitSize([w, h], { type: 'FeatureCollection', features: state.features });
+  } else if (PROJECTIONS[state.projId].type === '3d') {
+     const fitRatio = Math.min(w, h) / 2.2;
+     exProj.translate([w/2, h/2]).scale(fitRatio * state.zoom).rotate(state.rotation).clipAngle(90);
+  } else {
+     exProj.fitSize([w, h], { type:'Sphere' });
+  }
+  const exPath = d3.geoPath(exProj);
+  const colors = state.colors;
+
+  // 4. Draw
+  // Bg
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("width", w); rect.setAttribute("height", h);
+  rect.setAttribute("fill", colors.ocean);
+  exSvg.appendChild(rect);
+
+  // Group for content
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  exSvg.appendChild(g);
+  
+  // Transform? (Only for 2D zoom export logic, complex. Let's just fit for export unless globe)
+  // Actually, for consistency, Flat maps usually export "Whole World" regardless of zoom in view, 
+  // whereas Globe exports "Current View". The code above fits whole world for 2D.
+  
+  // Sphere (Globe only visible)
+  if (PROJECTIONS[state.projId].type === '3d') {
+    const sph = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    sph.setAttribute("d", exPath({type:'Sphere'}));
+    sph.setAttribute("fill", colors.ocean);
+    g.appendChild(sph);
+  }
+
+  // Grid
+  const gr = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  gr.setAttribute("d", exPath(d3.geoGraticule10()));
+  gr.setAttribute("fill", "none");
+  gr.setAttribute("stroke", colors.grid);
+  gr.setAttribute("stroke-width", w > 2000 ? 2 : 1);
+  g.appendChild(gr);
+
+  // Features
+  state.features.forEach(d => {
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const pathStr = exPath(d);
+    if (!pathStr) return;
+    p.setAttribute("d", pathStr);
+    p.setAttribute("fill", state.selected.has(getName(d)) ? colors.high : colors.land);
+    p.setAttribute("stroke", colors.stroke);
+    p.setAttribute("stroke-width", w > 2000 ? 2 : 1);
+    g.appendChild(p);
+  });
+
+  // Labels
+  if (state.showLabels) {
+    state.features.filter(d => state.selected.has(getName(d))).forEach(d => {
+      const c = exPath.centroid(d);
+      if (PROJECTIONS[state.projId].type === '3d' && !d3.geoContains(d, exProj.invert(c))) return;
+      
+      const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      txt.setAttribute("x", c[0]); txt.setAttribute("y", c[1]);
+      txt.setAttribute("text-anchor", "middle");
+      txt.setAttribute("fill", colors.text);
+      txt.textContent = getName(d);
+      txt.setAttribute("font-size", w > 2000 ? "32px" : "16px");
+      txt.setAttribute("font-family", "sans-serif");
+      g.appendChild(txt);
+    });
+  }
+
+  // 5. Download
+  const serializer = new XMLSerializer();
+  const svgStr = serializer.serializeToString(exSvg);
+  const blob = new Blob([svgStr], {type: "image/svg+xml;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  
+  if (type === 'svg') {
+    const a = document.createElement('a');
+    a.href = url; a.download = `map-${state.mode}.svg`;
+    a.click();
+  } else {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL("image/png");
+      a.download = `map-${state.mode}.png`;
+      a.click();
+    };
+    img.src = url;
+  }
+}
+
+// Boot
+init();
+</script>
 </body>
 </html>
