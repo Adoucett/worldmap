@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Planet Map Creator</title>
+  <link rel="icon" href="data:,"> <title>Planet Map Creator</title>
   <style>
     :root {
       --c-accent: #009DA5;
@@ -216,11 +216,19 @@ const PROJECTIONS = {
 // --- Globals ---
 let svg, gMap, pathSphere, pathGrid, gFeats, pathBorders, gLabels;
 let projection, pathGen;
-let zoomBehavior, dragBehavior; // Interaction handlers
+let zoomBehavior, dragBehavior;
 
 // --- Init ---
 async function init() {
+  console.log("Initializing Map Engine...");
+  
+  // 1. Initialize Global SVG References
   svg = d3.select('#map-svg');
+  if (svg.empty()) {
+    console.error("Critical Error: SVG container not found.");
+    return;
+  }
+  
   gMap = svg.append('g');
   pathSphere = gMap.append('path').attr('class', 'sphere');
   pathGrid = gMap.append('path').attr('class', 'grid').attr('fill', 'none');
@@ -231,18 +239,25 @@ async function init() {
   setupUI();
   updateTheme();
   
-  // Resize listener
+  // 2. Measure Container
   const resize = () => {
-    const r = document.querySelector('main').getBoundingClientRect();
-    state.width = r.width;
-    state.height = r.height;
-    updateProjection();
+    const r = document.querySelector('main')?.getBoundingClientRect();
+    if (r) {
+      state.width = r.width;
+      state.height = r.height;
+      updateProjection();
+    }
   };
-  window.addEventListener('resize', resize);
-  resize();
-
+  
+  // 3. Load Data
   await loadData();
+  
+  // 4. Initial Render & Listener Attach
+  resize(); // Trigger first sizing
+  window.addEventListener('resize', resize);
+  
   setLoading(false);
+  console.log("Map Initialized.");
 }
 
 // --- Data ---
@@ -253,28 +268,19 @@ async function loadData() {
     state.borders = null;
 
     if (state.mode === 'world') {
-      // Load relative path
       const topo = await d3.json('./lib/assets/ne_50m_admin_0_countries_TOPOJSON_compact.json');
       state.features = topojson.feature(topo, topo.objects.ne_50m_admin_0_countries).features;
-      // Filter out Antarctica for cleaner look? Optional.
-      // state.features = state.features.filter(d => d.properties.NAME !== "Antarctica");
       state.borders = topojson.mesh(topo, topo.objects.ne_50m_admin_0_countries, (a, b) => a !== b);
     } else {
       const geo = await d3.json('./lib/assets/gz_2010_us_040_00_20m.json');
       state.features = geo.features;
-      // No mesh for GeoJSON unless we calculate it, simple path stroke is enough for US states
     }
     
-    // Sort for list
     state.features.sort((a,b) => getName(a).localeCompare(getName(b)));
-    
     updateList();
-    updateProjection();
   } catch (err) {
-    console.error(err);
-    alert("Error loading data. Ensure the ./lib/assets folder is present.");
-  } finally {
-    setLoading(false);
+    console.error("Data Load Error:", err);
+    alert("Error loading map data. Please check your ./lib/assets folder structure.");
   }
 }
 
@@ -282,6 +288,9 @@ function getName(d) { return d.properties.NAME || d.properties.name || 'Unknown'
 
 // --- Projection & Rendering ---
 function updateProjection() {
+  // CRITICAL: Safety check for svg
+  if (!svg || svg.empty()) return;
+  
   const def = PROJECTIONS[state.projId];
   if (!def) return;
 
@@ -298,14 +307,12 @@ function updateProjection() {
   if (state.mode === 'us' && state.projId === 'albersUsa') {
     projection.fitSize([state.width, state.height], { type: 'FeatureCollection', features: state.features });
   } else if (def.type === '3d') {
-    // Globe logic: Scale controls size directly, Rotate controls view
     const fitRatio = Math.min(state.width, state.height) / 2.2; 
     projection.translate([state.width/2, state.height/2]);
     projection.scale(fitRatio * state.zoom);
     projection.rotate(state.rotation);
-    projection.clipAngle(90); // Cut back of globe
+    projection.clipAngle(90);
   } else {
-    // 2D logic: Fit to screen, Zoom controls SVG transform
     projection.fitSize([state.width, state.height], { type: 'Sphere' });
   }
 
@@ -316,44 +323,49 @@ function updateProjection() {
 }
 
 function render() {
-  if (!pathGen) return;
+  if (!pathGen || !svg) return; // Defensive check
 
   const colors = state.colors;
   const is3D = PROJECTIONS[state.projId].type === '3d';
   
-  // 1. Background / Sphere
+  // Background
   svg.style('background', is3D ? colors.ocean : '#e0e0e0');
   
-  if (is3D) {
-    pathSphere.attr('d', pathGen({type:'Sphere'})).attr('fill', colors.ocean).attr('stroke', 'none');
-  } else {
-    // In 2D, the ocean is the background, sphere is transparent or hidden
-    pathSphere.attr('d', pathGen({type:'Sphere'})).attr('fill', colors.ocean); 
+  // Sphere
+  const sphereD = pathGen({type:'Sphere'});
+  if (sphereD) {
+      pathSphere.attr('d', sphereD).attr('fill', colors.ocean).attr('stroke', 'none');
   }
 
-  // 2. Graticule
-  pathGrid.attr('d', pathGen(d3.geoGraticule10())).attr('stroke', colors.grid).attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
+  // Graticule
+  const gridD = pathGen(d3.geoGraticule10());
+  if (gridD) {
+      pathGrid.attr('d', gridD).attr('stroke', colors.grid).attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
+  }
 
-  // 3. Features
+  // Features
   gFeats.selectAll('path')
     .data(state.features, d => getName(d))
     .join('path')
     .attr('d', pathGen)
     .attr('fill', d => state.selected.has(getName(d)) ? colors.high : colors.land)
     .attr('stroke', colors.stroke)
-    .attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k)) // Keep thin lines
+    .attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k))
     .on('click', (e, d) => toggleSelect(getName(d)));
 
-  // 4. Borders (Mesh)
+  // Borders
   if (state.borders) {
-    pathBorders.attr('d', pathGen(state.borders))
-      .attr('stroke', colors.stroke)
-      .attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
+    const borderD = pathGen(state.borders);
+    if(borderD) {
+        pathBorders.attr('d', borderD)
+          .attr('stroke', colors.stroke)
+          .attr('stroke-width', 0.5 / (is3D ? 1 : state.transform.k));
+    }
   } else {
     pathBorders.attr('d', null);
   }
 
-  // 5. Labels
+  // Labels
   if (state.showLabels) {
     const visible = state.features.filter(d => state.selected.has(getName(d)));
     gLabels.selectAll('text')
@@ -361,8 +373,8 @@ function render() {
       .join('text')
       .attr('transform', d => {
         const c = pathGen.centroid(d);
-        // Hide labels on backside of globe
-        return (is3D && !d3.geoContains(d, projection.invert(c))) ? 'translate(-9999,-9999)' : `translate(${c[0]},${c[1]})`;
+        if (is3D && !d3.geoContains(d, projection.invert(c))) return 'translate(-9999,-9999)';
+        return isFinite(c[0]) ? `translate(${c[0]},${c[1]})` : 'translate(-9999,-9999)';
       })
       .attr('text-anchor', 'middle')
       .attr('dy', '0.35em')
@@ -377,12 +389,13 @@ function render() {
 
 // --- Interactions ---
 function updateInteractions(type) {
-  // Clear old listeners
+  // CRITICAL FIX: Ensure svg exists before attaching listeners
+  if (!svg || svg.empty()) return;
+
   svg.on('.zoom', null).on('.drag', null);
 
   if (type === '3d') {
-    // -- GLOBE MODE --
-    // 1. Zoom handles Scale only (no panning)
+    // Globe Mode: Drag rotates, Wheel scales
     zoomBehavior = d3.zoom()
       .scaleExtent([0.5, 10])
       .on('zoom', e => {
@@ -392,11 +405,9 @@ function updateInteractions(type) {
         updateProjection(); 
       });
     
-    // Hack: Initialize zoom identity to current scale to prevent jumping
-    svg.call(zoomBehavior).on("mousedown.zoom", null); // Disable default zoom drag (pan)
+    svg.call(zoomBehavior).on("mousedown.zoom", null);
     svg.call(zoomBehavior.transform, d3.zoomIdentity.scale(state.zoom));
 
-    // 2. Drag handles Rotation (Versor)
     dragBehavior = d3.drag()
       .on('start', dragStart)
       .on('drag', dragMove);
@@ -404,17 +415,15 @@ function updateInteractions(type) {
     svg.call(dragBehavior);
 
   } else {
-    // -- 2D MODE --
-    // Standard D3 Zoom/Pan
+    // 2D Mode: Standard Zoom/Pan
     zoomBehavior = d3.zoom()
       .scaleExtent([1, 40])
       .on('zoom', e => {
         state.transform = e.transform;
-        // Sync slider for 2D zoom is tricky, usually we just update visual
         state.zoom = e.transform.k; 
         document.getElementById('zoom-range').value = state.zoom;
         document.getElementById('zoom-val').textContent = state.zoom.toFixed(1);
-        render(); // Just re-render (apply transform), don't re-project
+        render(); // Efficient render
         gMap.attr('transform', e.transform);
       });
       
@@ -440,35 +449,31 @@ function dragMove(event) {
   state.rotation = versor.rotation(q1);
   updateProjection();
 }
-svg.on('mouseup', () => svg.style('cursor', 'grab'));
 
 // --- UI Logic ---
 function setupUI() {
-  // Projections
   const projSel = document.getElementById('proj-select');
   const updateProjs = () => {
     projSel.innerHTML = Object.entries(PROJECTIONS)
       .filter(([k,v]) => {
-        if(state.mode === 'us') return k === 'albersUsa'; // Only Albers for US
-        return k !== 'albersUsa'; // Others for World
+        if(state.mode === 'us') return k === 'albersUsa';
+        return k !== 'albersUsa';
       })
       .map(([k,v]) => `<option value="${k}">${v.name}</option>`).join('');
     
-    // Default select
     if(state.mode === 'us') state.projId = 'albersUsa';
-    else if(state.projId === 'albersUsa') state.projId = 'equalEarth'; // Fallback
+    else if(state.projId === 'albersUsa') state.projId = 'equalEarth';
     projSel.value = state.projId;
   };
   updateProjs();
 
-  // Listeners
   document.getElementById('geo-mode').addEventListener('change', e => {
     state.mode = e.target.value;
     state.selected.clear();
-    state.rotation = [0,0,0]; // Reset rotation
-    state.transform = {k:1, x:0, y:0}; // Reset pan
+    state.rotation = [0,0,0]; 
+    state.transform = {k:1, x:0, y:0};
     updateProjs();
-    loadData();
+    loadData().then(updateProjection); // Ensure data is loaded before projecting
   });
 
   document.getElementById('proj-select').addEventListener('change', e => {
@@ -506,7 +511,6 @@ function setupUI() {
     render();
   });
 
-  // Color inputs
   ['ocean','land','stroke','high','grid','text'].forEach(k => {
     document.getElementById(`c-${k}`).addEventListener('input', e => {
       document.getElementById('theme-select').value = 'custom';
@@ -516,11 +520,9 @@ function setupUI() {
     });
   });
 
-  // Search
   document.getElementById('search').addEventListener('input', e => updateList(e.target.value));
   document.getElementById('clear-sel').addEventListener('click', () => { state.selected.clear(); updateList(); render(); });
   
-  // Labels
   document.getElementById('show-labels').addEventListener('change', e => { state.showLabels = e.target.checked; render(); });
   document.getElementById('label-size').addEventListener('input', e => { 
     state.labelSize = +e.target.value; 
@@ -528,14 +530,15 @@ function setupUI() {
     render(); 
   });
   
-  // Export
   document.getElementById('dl-svg').addEventListener('click', () => exportMap('svg'));
   document.getElementById('dl-png').addEventListener('click', () => exportMap('png'));
+  
+  // Fix cursor behavior
+  if(svg) svg.on('mouseup', () => svg.style('cursor', 'grab'));
 }
 
 function updateTheme() {
   state.colors = { ...THEMES[state.theme] };
-  // Sync inputs
   Object.keys(state.colors).forEach(k => {
     const el = document.getElementById(`c-${k}`);
     if(el) el.value = state.colors[k];
@@ -551,13 +554,11 @@ function updateList(filter = '') {
     return `<div class="list-item ${state.selected.has(name) ? 'selected' : ''}" data-name="${name}">${name}</div>`;
   }).join('');
   
-  // Tags
   const tags = document.getElementById('sel-tags');
   tags.innerHTML = Array.from(state.selected).map(name => 
     `<div class="tag">${name} <span data-name="${name}">×</span></div>`
   ).join('');
   
-  // Events
   list.querySelectorAll('.list-item').forEach(el => el.addEventListener('click', () => toggleSelect(el.dataset.name)));
   tags.querySelectorAll('span').forEach(el => el.addEventListener('click', () => toggleSelect(el.dataset.name)));
 }
@@ -577,18 +578,15 @@ function setLoading(active) {
 
 // --- Export ---
 function exportMap(type) {
-  // 1. Get dimensions
   const res = document.getElementById('export-res').value;
   const dims = { web:[1200,630], hd:[1920,1080], '4k':[3840,2160] }[res];
   const w = dims[0], h = dims[1];
 
-  // 2. Create offscreen context
   const exSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   exSvg.setAttribute("width", w);
   exSvg.setAttribute("height", h);
   exSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   
-  // 3. New Projection instance for export size
   let exProj = PROJECTIONS[state.projId].fn();
   if (state.mode === 'us') {
     exProj.fitSize([w, h], { type: 'FeatureCollection', features: state.features });
@@ -601,22 +599,14 @@ function exportMap(type) {
   const exPath = d3.geoPath(exProj);
   const colors = state.colors;
 
-  // 4. Draw
-  // Bg
   const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   rect.setAttribute("width", w); rect.setAttribute("height", h);
   rect.setAttribute("fill", colors.ocean);
   exSvg.appendChild(rect);
 
-  // Group for content
   const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
   exSvg.appendChild(g);
   
-  // Transform? (Only for 2D zoom export logic, complex. Let's just fit for export unless globe)
-  // Actually, for consistency, Flat maps usually export "Whole World" regardless of zoom in view, 
-  // whereas Globe exports "Current View". The code above fits whole world for 2D.
-  
-  // Sphere (Globe only visible)
   if (PROJECTIONS[state.projId].type === '3d') {
     const sph = document.createElementNS("http://www.w3.org/2000/svg", "path");
     sph.setAttribute("d", exPath({type:'Sphere'}));
@@ -624,7 +614,6 @@ function exportMap(type) {
     g.appendChild(sph);
   }
 
-  // Grid
   const gr = document.createElementNS("http://www.w3.org/2000/svg", "path");
   gr.setAttribute("d", exPath(d3.geoGraticule10()));
   gr.setAttribute("fill", "none");
@@ -632,7 +621,6 @@ function exportMap(type) {
   gr.setAttribute("stroke-width", w > 2000 ? 2 : 1);
   g.appendChild(gr);
 
-  // Features
   state.features.forEach(d => {
     const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
     const pathStr = exPath(d);
@@ -644,7 +632,6 @@ function exportMap(type) {
     g.appendChild(p);
   });
 
-  // Labels
   if (state.showLabels) {
     state.features.filter(d => state.selected.has(getName(d))).forEach(d => {
       const c = exPath.centroid(d);
@@ -661,7 +648,6 @@ function exportMap(type) {
     });
   }
 
-  // 5. Download
   const serializer = new XMLSerializer();
   const svgStr = serializer.serializeToString(exSvg);
   const blob = new Blob([svgStr], {type: "image/svg+xml;charset=utf-8"});
